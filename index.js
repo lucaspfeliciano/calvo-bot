@@ -43,6 +43,22 @@ const EDUARDO_QUOTES = [
   "🚀 Jogo grande pede cabeça grande: menos desculpa, mais ajuste e intensidade.",
   "😤 Você até jogou bem, só precisa dar uma trabalhada na comunicação, jogo em dupla, posicionamento, coordenação, timing, confiança, controle de bola, movimentação e noção de jogo que você vai virar um MONSTRO no futevôlei!",
 ];
+const GUI_QUESTIONS = [
+  "Você mamaria o Matheus Mazzafera para comer a Ariana Grande?",
+  "Você já tentou chupar seu próprio pau?",
+  "Você daria o cu por 1 milhão de reais?",
+  "Você daria o cu para o Figueirense ganhar uma Libertadores?",
+  "Você comeria a Bruna Biancardi para poder comer o Neymar?",
+  "Você daria o cu para o Lula para o Flamengo não existir mais?",
+  "Você daria o cu para um negão de 2m para a seleção ganhar o Hexa?",
+  "Você daría o cu para o Jeff Bezos para nunca mais ter que trabalhar na vida?",
+  "Você daria o cu para o Elon Musk para ter acesso à internet de graça pra sempre?",
+  "Você daria o cu para o Bill Gates para ter um PC gamer top sem pagar nada?",
+  "Você daria o cu para o Mark Zuckerberg para ter acesso ilimitado ao Facebook e Instagram sem ser banido?",
+  "Você daria o cu para o Steve Jobs para ter um iPhone grátis pra sempre?",
+  "Você daria o cu para o Jeff para nunca mais ouvir falar do Jeff na vida?",
+  "Você conhece o jogo do pãozinho?",
+];
 const POKER_REVEAL_DELAY_MS = 1600;
 const POKER_BURN_DELAY_MS = 1000;
 const MIX_TEAM_SIZE = 5;
@@ -108,6 +124,34 @@ client.on("messageCreate", async (message) => {
       message.reply("Deu erro na mesa do Netinho 😢").catch(() => {});
     });
     return;
+  }
+
+  if (command === "$comandos") {
+    return message.reply(
+      [
+        "📜 **Comandos disponíveis**",
+        "$comandos - Lista todos os comandos",
+        "$play <nome/link> - Adiciona música na fila",
+        "$skip - Pula música atual",
+        "$stop - Para e limpa fila",
+        "$leave - Bot sai da call",
+        "$now - Mostra música atual",
+        "$queue - Mostra fila",
+        "$torugo - Força o hino do Torugo",
+        "$netinho - Mesa de poker animada",
+        "$cadinho - Rola Fear/Hope (2d12)",
+        "$mix - Monta mix com draft de capitães",
+        "$picks - Picks/Bans de mapas",
+        "$ramon - Abre lobby interativo de CS (line de 5)",
+        "$caslu - Move geral aleatoriamente nas calls",
+        "$lemos - Mestre dos magos",
+        "$lg - DJ anão entra na sala",
+        "$eduardo - Frase motivacional do futevolei",
+        "$tadeu - Mensagem especial do Delicio",
+        "$jeff / $calvo - Muta o Jeff",
+        "$gui - Enquete aleatória duvidosa",
+      ].join("\n"),
+    );
   }
 
   if (command === "$jeff" || command === "$calvo") {
@@ -220,6 +264,27 @@ client.on("messageCreate", async (message) => {
         `✨ Hope (d12): **${hopeRoll}**`,
       ].join("\n"),
     );
+  }
+
+  if (command === "$gui") {
+    const question = pickRandom(GUI_QUESTIONS);
+    const pollMessage = await message.reply(
+      [
+        "❓ **Enquete do Gui (muito duvidosa):**",
+        question,
+        "",
+        "Reaja com 👍 (sim) ou 👎 (nao).",
+      ].join("\n"),
+    );
+
+    try {
+      await pollMessage.react("👍");
+      await pollMessage.react("👎");
+    } catch {
+      // Se faltar permissão de reação, a enquete continua só com texto.
+    }
+
+    return;
   }
 
   if (command === "$mix") {
