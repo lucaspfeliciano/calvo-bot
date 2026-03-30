@@ -59,7 +59,12 @@ client.on("messageCreate", async (message) => {
   const command = args.shift().toLowerCase();
   const query = args.join(" ");
 
-  const voiceRequiredCommands = new Set(["$play", "$skip", "$torugo"]);
+  const voiceRequiredCommands = new Set([
+    "$play",
+    "$skip",
+    "$torugo",
+    "$netinho",
+  ]);
   const voiceChannel = message.member?.voice.channel;
   if (!voiceChannel && voiceRequiredCommands.has(command)) {
     return message.reply("Entra em um canal de voz primeiro burrão");
@@ -339,7 +344,10 @@ function createGuildQueue(guild, voiceChannel, textChannel) {
 
 async function runNetinhoPoker(message) {
   const pokerMessagePromise = message.reply("🃏 Embaralhando as cartas...");
-  const players = await getPokerPlayers(message.guild);
+  const players = await getPokerPlayers(
+    message.guild,
+    message.member?.voice?.channelId,
+  );
   const pokerMessage = await pokerMessagePromise;
 
   if (players.length < 2) {
@@ -567,16 +575,18 @@ function sleep(ms) {
   });
 }
 
-async function getPokerPlayers(guild) {
-  const onlineMembers = guild.presences.cache
-    .filter((presence) => {
-      if (presence.user?.bot) return false;
-      return presence.status && presence.status !== "offline";
-    })
-    .map((presence) => guild.members.cache.get(presence.userId))
+async function getPokerPlayers(guild, channelId) {
+  if (!channelId) return [];
+
+  const channelMembers = guild.voiceStates.cache
+    .filter(
+      (voiceState) =>
+        voiceState.channelId === channelId && !voiceState.member?.user.bot,
+    )
+    .map((voiceState) => voiceState.member)
     .filter(Boolean);
 
-  return uniqueMembersById(onlineMembers);
+  return uniqueMembersById(channelMembers);
 }
 
 function uniqueMembersById(members) {
