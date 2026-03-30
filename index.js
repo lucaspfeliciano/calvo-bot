@@ -29,6 +29,8 @@ const TORUGO_FALLBACK_QUERIES = [
   "filho do piseiro junin",
   "hino do torugo",
 ];
+const POKER_REVEAL_DELAY_MS = 900;
+const POKER_BURN_DELAY_MS = 600;
 let hasSoundCloudToken = false;
 let soundCloudInitPromise = null;
 
@@ -66,7 +68,11 @@ client.on("messageCreate", async (message) => {
   let queue = queues.get(message.guild.id);
 
   if (command === "$netinho") {
-    return runNetinhoPoker(message);
+    runNetinhoPoker(message).catch((error) => {
+      console.error("Erro no comando $netinho:", error);
+      message.reply("Deu erro na mesa do Netinho 😢").catch(() => {});
+    });
+    return;
   }
 
   if (command === "$jeff" || command === "$calvo") {
@@ -332,14 +338,17 @@ function createGuildQueue(guild, voiceChannel, textChannel) {
 }
 
 async function runNetinhoPoker(message) {
+  const pokerMessagePromise = message.reply("🃏 Embaralhando as cartas...");
   const players = await getPokerPlayers(message.guild, message.author.id);
+  const pokerMessage = await pokerMessagePromise;
+
   if (players.length < 2) {
-    return message.reply(
+    return pokerMessage.edit(
       "Não achei jogadores online suficientes pra mesa do Netinho. Preciso de pelo menos 2.",
     );
   }
 
-  const selectedPlayers = shuffle([...players]).slice(0, 8);
+  const selectedPlayers = shuffle([...players]).slice(0, 6);
   const deck = createDeck();
   shuffle(deck);
 
@@ -366,11 +375,48 @@ async function runNetinhoPoker(message) {
     (result) => compareHandsDesc(result.bestHand, topHand) === 0,
   );
 
-  const pokerMessage = await message.reply({
+  await pokerMessage.edit({
     embeds: [buildPokerEmbed({ results, step: "preflop" })],
   });
 
-  await sleep(1500);
+  await sleep(POKER_BURN_DELAY_MS);
+  await pokerMessage.edit({
+    embeds: [
+      buildPokerEmbed({
+        results,
+        step: "burn1",
+        suspenseText: "🔥 Queimando uma carta... o flop vem aí.",
+      }),
+    ],
+  });
+
+  await sleep(POKER_REVEAL_DELAY_MS);
+  await pokerMessage.edit({
+    embeds: [
+      buildPokerEmbed({
+        results,
+        communityCards,
+        revealedCount: 1,
+        step: "flop1",
+        suspenseText: "👀 Primeira carta do flop na mesa...",
+      }),
+    ],
+  });
+
+  await sleep(POKER_REVEAL_DELAY_MS - 200);
+  await pokerMessage.edit({
+    embeds: [
+      buildPokerEmbed({
+        results,
+        communityCards,
+        revealedCount: 2,
+        step: "flop2",
+        suspenseText: "😮 Segunda carta revelada...",
+      }),
+    ],
+  });
+
+  await sleep(POKER_REVEAL_DELAY_MS - 200);
   await pokerMessage.edit({
     embeds: [
       buildPokerEmbed({
@@ -378,11 +424,25 @@ async function runNetinhoPoker(message) {
         communityCards,
         revealedCount: 3,
         step: "flop",
+        suspenseText: "🟩 Flop completo. As reads comecam.",
       }),
     ],
   });
 
-  await sleep(1500);
+  await sleep(POKER_BURN_DELAY_MS);
+  await pokerMessage.edit({
+    embeds: [
+      buildPokerEmbed({
+        results,
+        communityCards,
+        revealedCount: 3,
+        step: "burn2",
+        suspenseText: "🔥 Mais uma carta queimada... preparando o turn.",
+      }),
+    ],
+  });
+
+  await sleep(POKER_REVEAL_DELAY_MS);
   await pokerMessage.edit({
     embeds: [
       buildPokerEmbed({
@@ -390,11 +450,25 @@ async function runNetinhoPoker(message) {
         communityCards,
         revealedCount: 4,
         step: "turn",
+        suspenseText: "🟨 Turn aberto! Quem segurou o all-in?",
       }),
     ],
   });
 
-  await sleep(1500);
+  await sleep(POKER_BURN_DELAY_MS);
+  await pokerMessage.edit({
+    embeds: [
+      buildPokerEmbed({
+        results,
+        communityCards,
+        revealedCount: 4,
+        step: "burn3",
+        suspenseText: "🔥 Ultima carta queimada... river decisivo.",
+      }),
+    ],
+  });
+
+  await sleep(POKER_REVEAL_DELAY_MS);
   await pokerMessage.edit({
     embeds: [
       buildPokerEmbed({
@@ -402,11 +476,12 @@ async function runNetinhoPoker(message) {
         communityCards,
         revealedCount: 5,
         step: "river",
+        suspenseText: "🟥 River na mesa. Agora e coracao.",
       }),
     ],
   });
 
-  await sleep(1300);
+  await sleep(POKER_REVEAL_DELAY_MS);
   return pokerMessage.edit({
     embeds: [
       buildPokerEmbed({
@@ -415,6 +490,7 @@ async function runNetinhoPoker(message) {
         revealedCount: 5,
         step: "showdown",
         winners,
+        suspenseText: "🏁 Showdown! Cartas na mesa.",
       }),
     ],
   });
@@ -426,11 +502,17 @@ function buildPokerEmbed({
   revealedCount = 0,
   step,
   winners = [],
+  suspenseText = null,
 }) {
   const statusByStep = {
-    preflop: "🃏 Pré-flop: cartas na mão, mesa fechada.",
+    preflop: "🃏 Pré-flop: todo mundo de olho no dealer.",
+    burn1: "🔥 Burn card antes do flop.",
+    flop1: "👀 Flop começando...",
+    flop2: "😮 A mesa tá ficando perigosa.",
     flop: "🟩 Flop aberto.",
+    burn2: "🔥 Burn card antes do turn.",
     turn: "🟨 Turn aberto.",
+    burn3: "🔥 Burn card antes do river.",
     river: "🟥 River aberto.",
     showdown: "🏁 Showdown.",
   };
@@ -454,7 +536,7 @@ function buildPokerEmbed({
     .setColor(0x2ecc71)
     .setDescription(
       [
-        statusByStep[step] || "Rodada em andamento.",
+        suspenseText || statusByStep[step] || "Rodada em andamento.",
         `Mesa: ${tableCards.join(" ")}`,
         "",
         "**Jogadores:**",
@@ -486,22 +568,15 @@ function sleep(ms) {
 }
 
 async function getPokerPlayers(guild, authorId) {
-  try {
-    await guild.members.fetch();
-  } catch {
-    // Se falhar, segue com cache existente.
-  }
+  const onlineMembers = guild.presences.cache
+    .filter((presence) => {
+      if (presence.user?.bot) return false;
+      return presence.status && presence.status !== "offline";
+    })
+    .map((presence) => guild.members.cache.get(presence.userId))
+    .filter(Boolean);
 
-  const members = [...guild.members.cache.values()].filter(
-    (member) => !member.user.bot,
-  );
-
-  const onlineMembers = members.filter((member) => {
-    const status = member.presence?.status;
-    return status && status !== "offline";
-  });
-
-  if (onlineMembers.length >= 2) return onlineMembers;
+  if (onlineMembers.length >= 2) return uniqueMembersById(onlineMembers);
 
   const voiceMembers = guild.voiceStates.cache
     .filter(
@@ -510,13 +585,15 @@ async function getPokerPlayers(guild, authorId) {
     .map((voiceState) => voiceState.member)
     .filter(Boolean);
 
-  if (voiceMembers.length >= 2) return uniqueMembersById(voiceMembers);
-
-  const fallback = uniqueMembersById(
-    [...members, guild.members.cache.get(authorId)].filter(Boolean),
+  const combined = uniqueMembersById(
+    [
+      ...onlineMembers,
+      ...voiceMembers,
+      guild.members.cache.get(authorId),
+    ].filter(Boolean),
   );
 
-  return fallback;
+  return combined;
 }
 
 function uniqueMembersById(members) {
