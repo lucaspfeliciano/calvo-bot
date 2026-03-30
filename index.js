@@ -23,30 +23,32 @@ client.once("ready", () => {
 });
 
 client.on("messageCreate", async (message) => {
-  if (!message.content.startsWith("!")) return;
+  if (!message.content.startsWith("$")) return;
 
   const args = message.content.split(" ");
   const command = args.shift().toLowerCase();
   const query = args.join(" ");
 
   const voiceChannel = message.member?.voice.channel;
-  if (!voiceChannel && command !== "!stop" && command !== "!leave") {
-    return message.reply("entra em um canal de voz primeiro");
+  if (!voiceChannel && command !== "$stop" && command !== "$leave") {
+    return message.reply("Entra em um canal de voz primeiro burrão");
   }
 
   let queue = queues.get(message.guild.id);
 
-  if (command === "%torugo" || command === "%play") {
+  if (command === "$torugo" || command === "$play") {
     if (!query) return message.reply("Manda link ou nome da música seu burro");
 
-    let song;
+    let songsToAdd;
+    try {
+      songsToAdd = await resolveSongs(query);
+    } catch (error) {
+      console.error(error);
+      return message.reply("Deu ruim pra processar esse link 😢");
+    }
 
-    if (play.yt_validate(query) === "video") {
-      song = { url: query };
-    } else {
-      const results = await play.search(query, { limit: 1 });
-      if (!results.length) return message.reply("Não achei nada seu tanso 😢");
-      song = { url: results[0].url, title: results[0].title };
+    if (!songsToAdd.length) {
+      return message.reply("Não achei nada seu tanso 😢");
     }
 
     if (!queue) {
@@ -75,31 +77,38 @@ client.on("messageCreate", async (message) => {
       queue.connection.subscribe(queue.player);
     }
 
-    queue.songs.push(song);
+    queue.songs.push(...songsToAdd);
 
-    message.reply(
-      `🎶 adicionada, toca o pandeiro ai Junin: ${song.title || song.url}`,
-    );
+    const firstSong = songsToAdd[0];
+    if (songsToAdd.length === 1) {
+      message.reply(
+        `🎶 adicionada, toca o pandeiro ai Junin: ${firstSong.title || firstSong.url}`,
+      );
+    } else {
+      message.reply(
+        `🎶 ${songsToAdd.length} músicas adicionadas. Primeira da fila: ${firstSong.title || firstSong.url}`,
+      );
+    }
 
-    if (queue.songs.length === 1) {
+    if (queue.songs.length === songsToAdd.length) {
       playMusic(message.guild.id);
     }
   }
 
-  if (command === "!skip" || command === "!netinho") {
+  if (command === "$skip") {
     if (!queue) return;
     queue.player.stop();
-    message.reply("⏭️ Assim como faço no pau dos crias, pulando...");
+    message.reply("⏭️ Pulando...");
   }
 
-  if (command === "!calvo" || command === "!fau") {
+  if (command === "$calvo") {
     if (!queue) return;
     queue.songs = [];
     queue.player.stop();
     message.reply("⏹️ Sou calvo, parando de tocar");
   }
 
-  if (command === "!mauro" || command === "!leave") {
+  if (command === "$leave") {
     if (!queue) return;
     queue.connection.destroy();
     queues.delete(message.guild.id);
@@ -120,6 +129,75 @@ async function playMusic(guildId) {
   });
 
   queue.player.play(resource);
+}
+
+async function resolveSongs(query) {
+  const spotifyType = play.sp_validate(query);
+  if (spotifyType === "track") {
+    const track = await play.spotify(query);
+    const ytMatch = await searchYouTubeByTrackMeta(track.name, track.artists);
+    if (!ytMatch) return [];
+
+    return [
+      {
+        url: ytMatch.url,
+        title: `${track.name} - ${track.artists.map((artist) => artist.name).join(", ")}`,
+      },
+    ];
+  }
+
+  if (spotifyType === "album" || spotifyType === "playlist") {
+    const spotifyCollection = await play.spotify(query);
+    const tracks = await spotifyCollection.all_tracks();
+
+    // Evita filas gigantes e rate-limit em buscas seguidas.
+    const limitedTracks = tracks.slice(0, 20);
+    const resolvedTracks = await Promise.all(
+      limitedTracks.map(async (track) => {
+        const ytMatch = await searchYouTubeByTrackMeta(
+          track.name,
+          track.artists,
+        );
+        if (!ytMatch) return null;
+
+        return {
+          url: ytMatch.url,
+          title: `${track.name} - ${track.artists
+            .map((artist) => artist.name)
+            .join(", ")}`,
+        };
+      }),
+    );
+
+    return resolvedTracks.filter(Boolean);
+  }
+
+  const soundCloudType = play.so_validate(query);
+  if (soundCloudType === "track") {
+    const track = await play.soundcloud(query);
+    return [{ url: track.url, title: track.name }];
+  }
+
+  if (play.yt_validate(query) === "video") {
+    return [{ url: query }];
+  }
+
+  const results = await play.search(query, { limit: 1 });
+  if (!results.length) return [];
+
+  return [{ url: results[0].url, title: results[0].title }];
+}
+
+async function searchYouTubeByTrackMeta(name, artists = []) {
+  const artistNames = artists.map((artist) => artist.name).join(" ");
+  const searchQuery = `${name} ${artistNames} audio`;
+
+  const results = await play.search(searchQuery, {
+    limit: 1,
+    source: { youtube: "video" },
+  });
+
+  return results[0] || null;
 }
 
 client.login(process.env.TOKEN);
