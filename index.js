@@ -138,6 +138,32 @@ client.on("messageCreate", async (message) => {
     });
   }
 
+  if (command === "$lemos") {
+    const lemosImagePath = path.join(__dirname, "public", "lemos.png");
+    if (!fs.existsSync(lemosImagePath)) {
+      return message.reply("Não achei lemos.png na pasta public 😢");
+    }
+
+    const attachment = new AttachmentBuilder(lemosImagePath);
+    let disconnectedAuthor = false;
+
+    if (message.member?.voice?.channel) {
+      try {
+        await message.member.voice.setChannel(null, "Comando $lemos");
+        disconnectedAuthor = true;
+      } catch {
+        // Se não conseguir mover/desconectar, segue com envio da imagem.
+      }
+    }
+
+    return message.reply({
+      content: disconnectedAuthor
+        ? "🧙 Mestre dos magos ativado. Você desapareceu da call!"
+        : "🧙 Mestre dos magos ativado. Foto enviada, mas você não estava em call.",
+      files: [attachment],
+    });
+  }
+
   if (command === "$torugo") {
     if (!queue) {
       queue = createGuildQueue(message.guild, voiceChannel, message.channel);
