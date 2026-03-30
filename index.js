@@ -179,12 +179,14 @@ async function resolveSongs(query) {
     const match = await searchBestMatch(title);
     if (!match) return [];
 
-    return [{
-      url: match.url,
-      title,
-      source: match.source,
-      searchHint: title,
-    }];
+    return [
+      {
+        url: match.url,
+        title,
+        source: match.source,
+        searchHint: title,
+      },
+    ];
   }
 
   if (spotifyType === "album" || spotifyType === "playlist") {
@@ -302,18 +304,6 @@ async function searchWithSource(query, source, sourceLabel) {
   } catch {
     return null;
   }
-}
-
-async function searchYouTubeByTrackMeta(name, artists = []) {
-  const artistNames = artists.map((artist) => artist.name).join(" ");
-  const searchQuery = `${name} ${artistNames} audio`;
-
-  const results = await play.search(searchQuery, {
-    limit: 1,
-    source: { youtube: "video" },
-  });
-
-  return results[0] || null;
 }
 
 client.login(process.env.TOKEN);
