@@ -139,7 +139,7 @@ client.on("messageCreate", async (message) => {
         "$queue - Mostra fila",
         "$torugo - Força o hino do Torugo",
         "$netinho - Mesa de poker animada",
-        "$cadinho - Rola Fear/Hope (2d12)",
+        "$cadinho - Rola Fear/Hope (2d12) com animação",
         "$mix - Monta mix com draft de capitães",
         "$picks - Picks/Bans de mapas",
         "$ramon - Abre lobby interativo de CS (line de 5)",
@@ -254,12 +254,38 @@ client.on("messageCreate", async (message) => {
   }
 
   if (command === "$cadinho") {
+    const rollingFrames = ["🎲", "🎲 .", "🎲 . .", "🎲 . . ."];
+    const rollMessage = await message.reply(
+      [
+        "🎲 Cadinho invocou os dados de Daggerheart!",
+        "Rolando Fear e Hope...",
+      ].join("\n"),
+    );
+
+    for (let i = 0; i < 6; i += 1) {
+      const tempFear = rollDie(12);
+      const tempHope = rollDie(12);
+      const frame = rollingFrames[i % rollingFrames.length];
+
+      await rollMessage.edit(
+        [
+          "🎲 Cadinho invocou os dados de Daggerheart!",
+          `${frame} Rolando Fear e Hope...`,
+          `😨 Fear (d12): **${tempFear}**`,
+          `✨ Hope (d12): **${tempHope}**`,
+        ].join("\n"),
+      );
+
+      await sleep(450);
+    }
+
     const fearRoll = rollDie(12);
     const hopeRoll = rollDie(12);
 
-    return message.reply(
+    return rollMessage.edit(
       [
         "🎲 Cadinho invocou os dados de Daggerheart!",
+        "✅ Resultado final:",
         `😨 Fear (d12): **${fearRoll}**`,
         `✨ Hope (d12): **${hopeRoll}**`,
       ].join("\n"),
