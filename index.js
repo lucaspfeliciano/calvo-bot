@@ -6,6 +6,7 @@ const {
   AudioPlayerStatus,
 } = require("@discordjs/voice");
 const play = require("play-dl");
+const MAX_COLLECTION_TRACKS = 30;
 
 const client = new Client({
   intents: [
@@ -36,7 +37,7 @@ client.on("messageCreate", async (message) => {
 
   let queue = queues.get(message.guild.id);
 
-  if (command === "$torugo" || command === "$play") {
+  if (command === "$play") {
     if (!query) return message.reply("Manda link ou nome da música seu burro");
 
     let songsToAdd;
@@ -55,6 +56,7 @@ client.on("messageCreate", async (message) => {
       queue = {
         songs: [],
         player: createAudioPlayer(),
+        textChannel: message.channel,
         connection: joinVoiceChannel({
           channelId: voiceChannel.id,
           guildId: message.guild.id,
@@ -75,6 +77,8 @@ client.on("messageCreate", async (message) => {
       });
 
       queue.connection.subscribe(queue.player);
+    } else {
+      queue.textChannel = message.channel;
     }
 
     queue.songs.push(...songsToAdd);
@@ -101,7 +105,7 @@ client.on("messageCreate", async (message) => {
     message.reply("⏭️ Pulando...");
   }
 
-  if (command === "$calvo") {
+  if (command === "$stop") {
     if (!queue) return;
     queue.songs = [];
     queue.player.stop();
@@ -118,32 +122,69 @@ client.on("messageCreate", async (message) => {
 
 async function playMusic(guildId) {
   const queue = queues.get(guildId);
+  if (!queue) return;
+
   const song = queue.songs[0];
 
   if (!song) return;
 
-  const stream = await play.stream(song.url);
+  try {
+    const stream = await play.stream(song.url);
+    const resource = createAudioResource(stream.stream, {
+      inputType: stream.type,
+    });
 
-  const resource = createAudioResource(stream.stream, {
-    inputType: stream.type,
-  });
+    queue.player.play(resource);
+  } catch (error) {
+    console.error("Erro ao tocar música:", error);
 
-  queue.player.play(resource);
+    if (!song.triedFallback) {
+      song.triedFallback = true;
+      const fallbackSong = await buildSongFromSearchHint(
+        song.searchHint || song.title,
+        song.url,
+      );
+
+      if (fallbackSong) {
+        queue.songs[0] = fallbackSong;
+        if (queue.textChannel) {
+          queue.textChannel.send(
+            `⚠️ Falhou aqui, tentando fallback: ${fallbackSong.title || fallbackSong.url}`,
+          );
+        }
+
+        return playMusic(guildId);
+      }
+    }
+
+    queue.songs.shift();
+    if (queue.textChannel) {
+      queue.textChannel.send("⚠️ Não consegui tocar essa música, pulando...");
+    }
+
+    if (queue.songs.length) {
+      playMusic(guildId);
+    } else {
+      queue.connection.destroy();
+      queues.delete(guildId);
+    }
+  }
 }
 
 async function resolveSongs(query) {
   const spotifyType = play.sp_validate(query);
   if (spotifyType === "track") {
     const track = await play.spotify(query);
-    const ytMatch = await searchYouTubeByTrackMeta(track.name, track.artists);
-    if (!ytMatch) return [];
+    const title = `${track.name} - ${track.artists.map((artist) => artist.name).join(", ")}`;
+    const match = await searchBestMatch(title);
+    if (!match) return [];
 
-    return [
-      {
-        url: ytMatch.url,
-        title: `${track.name} - ${track.artists.map((artist) => artist.name).join(", ")}`,
-      },
-    ];
+    return [{
+      url: match.url,
+      title,
+      source: match.source,
+      searchHint: title,
+    }];
   }
 
   if (spotifyType === "album" || spotifyType === "playlist") {
@@ -151,20 +192,20 @@ async function resolveSongs(query) {
     const tracks = await spotifyCollection.all_tracks();
 
     // Evita filas gigantes e rate-limit em buscas seguidas.
-    const limitedTracks = tracks.slice(0, 20);
+    const limitedTracks = tracks.slice(0, MAX_COLLECTION_TRACKS);
     const resolvedTracks = await Promise.all(
       limitedTracks.map(async (track) => {
-        const ytMatch = await searchYouTubeByTrackMeta(
-          track.name,
-          track.artists,
-        );
-        if (!ytMatch) return null;
+        const title = `${track.name} - ${track.artists
+          .map((artist) => artist.name)
+          .join(", ")}`;
+        const match = await searchBestMatch(title);
+        if (!match) return null;
 
         return {
-          url: ytMatch.url,
-          title: `${track.name} - ${track.artists
-            .map((artist) => artist.name)
-            .join(", ")}`,
+          url: match.url,
+          title,
+          source: match.source,
+          searchHint: title,
         };
       }),
     );
@@ -175,17 +216,92 @@ async function resolveSongs(query) {
   const soundCloudType = play.so_validate(query);
   if (soundCloudType === "track") {
     const track = await play.soundcloud(query);
-    return [{ url: track.url, title: track.name }];
+    return [
+      {
+        url: track.url,
+        title: track.name,
+        source: "soundcloud",
+        searchHint: track.name,
+      },
+    ];
+  }
+
+  if (soundCloudType === "playlist") {
+    const playlist = await play.soundcloud(query);
+    const tracks = (playlist.tracks || []).slice(0, MAX_COLLECTION_TRACKS);
+
+    return tracks.map((track) => ({
+      url: track.url,
+      title: track.name,
+      source: "soundcloud",
+      searchHint: track.name,
+    }));
   }
 
   if (play.yt_validate(query) === "video") {
-    return [{ url: query }];
+    return [{ url: query, source: "youtube", searchHint: query }];
   }
 
-  const results = await play.search(query, { limit: 1 });
-  if (!results.length) return [];
+  const match = await searchBestMatch(query);
+  if (!match) return [];
 
-  return [{ url: results[0].url, title: results[0].title }];
+  return [
+    {
+      url: match.url,
+      title: match.title,
+      source: match.source,
+      searchHint: query,
+    },
+  ];
+}
+
+async function buildSongFromSearchHint(query, excludeUrl) {
+  if (!query) return null;
+  const match = await searchBestMatch(query, excludeUrl);
+  if (!match) return null;
+
+  return {
+    url: match.url,
+    title: match.title,
+    source: match.source,
+    searchHint: query,
+    triedFallback: true,
+  };
+}
+
+async function searchBestMatch(query, excludeUrl = null) {
+  const lookups = [
+    () => searchWithSource(query, { youtube: "video" }, "youtube"),
+    () => searchWithSource(query, { soundcloud: "tracks" }, "soundcloud"),
+    () => searchWithSource(query, undefined, "generic"),
+  ];
+
+  for (const lookup of lookups) {
+    const match = await lookup();
+    if (match && match.url !== excludeUrl) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+async function searchWithSource(query, source, sourceLabel) {
+  try {
+    const options = { limit: 1 };
+    if (source) options.source = source;
+
+    const results = await play.search(query, options);
+    if (!results.length) return null;
+
+    return {
+      url: results[0].url,
+      title: results[0].title,
+      source: sourceLabel,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function searchYouTubeByTrackMeta(name, artists = []) {
