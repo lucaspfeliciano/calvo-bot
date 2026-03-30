@@ -193,6 +193,19 @@ client.on("messageCreate", async (message) => {
     return message.reply(pickRandom(EDUARDO_QUOTES));
   }
 
+  if (command === "$cadinho") {
+    const fearRoll = rollDie(12);
+    const hopeRoll = rollDie(12);
+
+    return message.reply(
+      [
+        "🎲 Cadinho invocou os dados de Daggerheart!",
+        `😨 Fear (d12): **${fearRoll}**`,
+        `✨ Hope (d12): **${hopeRoll}**`,
+      ].join("\n"),
+    );
+  }
+
   if (command === "$tadeu") {
     return message.reply(
       "🍮 Delicio, tua missão é simples: trazer alegria, caos e um combo de lanche pra tropa.",
@@ -614,6 +627,10 @@ function sleep(ms) {
 
 function pickRandom(items) {
   return items[Math.floor(Math.random() * items.length)];
+}
+
+function rollDie(sides) {
+  return Math.floor(Math.random() * sides) + 1;
 }
 
 async function getPokerPlayers(guild, channelId) {
