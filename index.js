@@ -1,12 +1,25 @@
-const { Client, GatewayIntentBits } = require("discord.js");
+const {
+  Client,
+  GatewayIntentBits,
+  AttachmentBuilder,
+  ChannelType,
+} = require("discord.js");
 const {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
 } = require("@discordjs/voice");
+const fs = require("fs");
+const path = require("path");
 const play = require("play-dl");
 const MAX_COLLECTION_TRACKS = 30;
+const JEFF_USER_ID = "691022104812060704";
+const RAMON_LIST_CHANNEL_ID = "1233506971190038700";
+const TORUGO_URL =
+  "https://www.youtube.com/watch?v=0692WFAqRxs&list=RD0692WFAqRxs&start_radio=1";
+let hasSoundCloudToken = false;
+let soundCloudInitPromise = null;
 
 const client = new Client({
   intents: [
@@ -19,23 +32,121 @@ const client = new Client({
 
 const queues = new Map();
 
-client.once("ready", () => {
+client.once("clientReady", async () => {
+  await ensureSoundCloudReady();
   console.log("🎵 Bot online!");
 });
 
 client.on("messageCreate", async (message) => {
+  if (message.author.bot || !message.guild) return;
   if (!message.content.startsWith("$")) return;
 
   const args = message.content.split(" ");
   const command = args.shift().toLowerCase();
   const query = args.join(" ");
 
+  const voiceRequiredCommands = new Set(["$play", "$skip", "$torugo"]);
   const voiceChannel = message.member?.voice.channel;
-  if (!voiceChannel && command !== "$stop" && command !== "$leave") {
+  if (!voiceChannel && voiceRequiredCommands.has(command)) {
     return message.reply("Entra em um canal de voz primeiro burrão");
   }
 
   let queue = queues.get(message.guild.id);
+
+  if (command === "$netinho") {
+    const pokerJokes = [
+      "🃏 Netinho entrou de all-in com 7-2 e falou que era leitura avançada.",
+      "♠️ Netinho disse que blefe é arte. A mesa disse que era fanfic.",
+      "♥️ A mão do Netinho é tipo Wi-Fi ruim: parece forte, cai no river.",
+    ];
+
+    const randomJoke =
+      pokerJokes[Math.floor(Math.random() * pokerJokes.length)];
+    return message.reply(randomJoke);
+  }
+
+  if (command === "$jeff" || command === "$calvo") {
+    const muted = await muteJeff(message.guild, `Comando ${command} executado`);
+    if (muted) {
+      return message.reply(
+        "🔇 Jeff mutado com sucesso. Menos 30 minutos de palestra.",
+      );
+    }
+
+    return message.reply("Jeff não está em canal de voz agora pra mutar.");
+  }
+
+  if (command === "$caslu") {
+    const result = await moveEveryoneRandomly(message.guild);
+
+    if (!result.ok) {
+      return message.reply(result.message);
+    }
+
+    return message.reply(
+      `🎲 Bagunça do Caslu concluída. ${result.moved} pessoas foram movidas aleatoriamente.`,
+    );
+  }
+
+  if (command === "$ramon") {
+    const result = await createCsLobbyList(message.guild);
+    if (!result.ok) {
+      return message.reply(result.message);
+    }
+
+    return message.reply("✅ Lista do CS criada no canal combinado.");
+  }
+
+  if (command === "$lg") {
+    const djImagePath = getFirstImageFromPublic();
+    if (!djImagePath) {
+      return message.reply("Não achei foto na pasta public 😢");
+    }
+
+    const attachment = new AttachmentBuilder(djImagePath);
+    return message.reply({
+      content: "🎧 DJ anão na pista!",
+      files: [attachment],
+    });
+  }
+
+  if (command === "$torugo") {
+    if (!queue) {
+      queue = createGuildQueue(message.guild, voiceChannel, message.channel);
+    } else {
+      queue.textChannel = message.channel;
+    }
+
+    const torugoSong = {
+      url: TORUGO_URL,
+      title: "Filho do Piseiro - Hino do Torugo",
+      source: "youtube",
+      searchHint: "filho do piseiro",
+    };
+
+    if (!queue.songs.length) {
+      queue.songs.push(torugoSong);
+      playMusic(message.guild.id);
+    } else {
+      // Insere para tocar imediatamente após parar a música atual.
+      queue.songs.splice(1, 0, torugoSong);
+      queue.player.stop();
+    }
+
+    return message.reply("🔥 Torugo ativado. Filho do Piseiro vem aí agora!");
+  }
+
+  if (command === "$eduardo") {
+    return message.reply(
+      "💪 Eduardo, campeonato não define ninguém. Levanta a cabeça, treina e volta mais forte. Tamo junto!",
+    );
+  }
+
+  if (command === "$tadeu") {
+    return message.reply(
+      "🍮 Delicio, tua missão é simples: trazer alegria, caos e um combo de lanche pra tropa.",
+    );
+  }
 
   if (command === "$play") {
     if (!query) return message.reply("Manda link ou nome da música seu burro");
@@ -53,30 +164,7 @@ client.on("messageCreate", async (message) => {
     }
 
     if (!queue) {
-      queue = {
-        songs: [],
-        player: createAudioPlayer(),
-        textChannel: message.channel,
-        connection: joinVoiceChannel({
-          channelId: voiceChannel.id,
-          guildId: message.guild.id,
-          adapterCreator: message.guild.voiceAdapterCreator,
-        }),
-      };
-
-      queues.set(message.guild.id, queue);
-
-      queue.player.on(AudioPlayerStatus.Idle, () => {
-        queue.songs.shift();
-        if (queue.songs.length) {
-          playMusic(message.guild.id);
-        } else {
-          queue.connection.destroy();
-          queues.delete(message.guild.id);
-        }
-      });
-
-      queue.connection.subscribe(queue.player);
+      queue = createGuildQueue(message.guild, voiceChannel, message.channel);
     } else {
       queue.textChannel = message.channel;
     }
@@ -120,6 +208,137 @@ client.on("messageCreate", async (message) => {
   }
 });
 
+function createGuildQueue(guild, voiceChannel, textChannel) {
+  const queue = {
+    songs: [],
+    player: createAudioPlayer(),
+    textChannel,
+    connection: joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: guild.id,
+      adapterCreator: guild.voiceAdapterCreator,
+    }),
+  };
+
+  queues.set(guild.id, queue);
+
+  queue.player.on(AudioPlayerStatus.Idle, () => {
+    queue.songs.shift();
+    if (queue.songs.length) {
+      playMusic(guild.id);
+    } else {
+      queue.connection.destroy();
+      queues.delete(guild.id);
+    }
+  });
+
+  queue.connection.subscribe(queue.player);
+  return queue;
+}
+
+async function muteJeff(guild, reason) {
+  try {
+    const target = await guild.members.fetch(JEFF_USER_ID);
+    if (!target?.voice?.channel) return false;
+
+    await target.voice.setMute(true, reason);
+    return true;
+  } catch (error) {
+    console.error("Erro ao mutar Jeff:", error);
+    return false;
+  }
+}
+
+async function moveEveryoneRandomly(guild) {
+  try {
+    const voiceChannels = guild.channels.cache.filter(
+      (channel) => channel.type === ChannelType.GuildVoice,
+    );
+
+    if (!voiceChannels.size) {
+      return { ok: false, message: "Não achei salas de voz disponíveis." };
+    }
+
+    const membersInVoice = guild.voiceStates.cache
+      .filter(
+        (voiceState) =>
+          Boolean(voiceState.channelId) && !voiceState.member?.user.bot,
+      )
+      .map((voiceState) => voiceState.member)
+      .filter(Boolean);
+
+    if (!membersInVoice.length) {
+      return { ok: false, message: "Não tem ninguém em call pra movimentar." };
+    }
+
+    const channelsArray = [...voiceChannels.values()];
+    let moved = 0;
+    await Promise.all(
+      membersInVoice.map(async (member) => {
+        const randomChannel =
+          channelsArray[Math.floor(Math.random() * channelsArray.length)];
+        await member.voice.setChannel(randomChannel);
+        moved += 1;
+      }),
+    );
+
+    return { ok: true, moved };
+  } catch (error) {
+    console.error("Erro ao mover membros:", error);
+    return {
+      ok: false,
+      message:
+        "Não consegui mover geral. Verifica se o bot tem permissão de mover membros.",
+    };
+  }
+}
+
+async function createCsLobbyList(guild) {
+  try {
+    const channel = await guild.channels.fetch(RAMON_LIST_CHANNEL_ID);
+    if (!channel?.isTextBased()) {
+      return {
+        ok: false,
+        message: "Canal da lista do CS não encontrado ou não é canal de texto.",
+      };
+    }
+
+    await channel.send(
+      [
+        "🎯 **Lista do CS do Ramon**",
+        "Responde essa mensagem com teu nick pra entrar no mix:",
+        "1. ",
+        "2. ",
+        "3. ",
+        "4. ",
+        "5. ",
+      ].join("\n"),
+    );
+
+    return { ok: true };
+  } catch (error) {
+    console.error("Erro ao criar lista do CS:", error);
+    return {
+      ok: false,
+      message:
+        "Não consegui criar a lista no canal do Ramon. Confere o ID e permissões.",
+    };
+  }
+}
+
+function getFirstImageFromPublic() {
+  const publicDir = path.join(__dirname, "public");
+  if (!fs.existsSync(publicDir)) return null;
+
+  const files = fs.readdirSync(publicDir);
+  const imageFile = files.find((file) =>
+    /\.(png|jpg|jpeg|gif|webp)$/i.test(file),
+  );
+  if (!imageFile) return null;
+
+  return path.join(publicDir, imageFile);
+}
+
 async function playMusic(guildId) {
   const queue = queues.get(guildId);
   if (!queue) return;
@@ -137,12 +356,16 @@ async function playMusic(guildId) {
     queue.player.play(resource);
   } catch (error) {
     console.error("Erro ao tocar música:", error);
+    const isYouTubeBotBlock = /sign in to confirm/i.test(
+      String(error?.message || ""),
+    );
 
     if (!song.triedFallback) {
       song.triedFallback = true;
       const fallbackSong = await buildSongFromSearchHint(
         song.searchHint || song.title,
         song.url,
+        { preferNonYoutube: isYouTubeBotBlock },
       );
 
       if (fallbackSong) {
@@ -215,7 +438,7 @@ async function resolveSongs(query) {
     return resolvedTracks.filter(Boolean);
   }
 
-  const soundCloudType = play.so_validate(query);
+  const soundCloudType = await safeValidateSoundCloud(query);
   if (soundCloudType === "track") {
     const track = await play.soundcloud(query);
     return [
@@ -257,9 +480,9 @@ async function resolveSongs(query) {
   ];
 }
 
-async function buildSongFromSearchHint(query, excludeUrl) {
+async function buildSongFromSearchHint(query, excludeUrl, options = {}) {
   if (!query) return null;
-  const match = await searchBestMatch(query, excludeUrl);
+  const match = await searchBestMatch(query, excludeUrl, options);
   if (!match) return null;
 
   return {
@@ -271,12 +494,31 @@ async function buildSongFromSearchHint(query, excludeUrl) {
   };
 }
 
-async function searchBestMatch(query, excludeUrl = null) {
-  const lookups = [
-    () => searchWithSource(query, { youtube: "video" }, "youtube"),
-    () => searchWithSource(query, { soundcloud: "tracks" }, "soundcloud"),
-    () => searchWithSource(query, undefined, "generic"),
-  ];
+async function searchBestMatch(query, excludeUrl = null, options = {}) {
+  const soundCloudReady = await ensureSoundCloudReady();
+  const preferNonYoutube = Boolean(options.preferNonYoutube);
+
+  const lookups = preferNonYoutube
+    ? [
+        ...(soundCloudReady
+          ? [
+              () =>
+                searchWithSource(query, { soundcloud: "tracks" }, "soundcloud"),
+            ]
+          : []),
+        () => searchWithSource(query, { youtube: "video" }, "youtube"),
+        () => searchWithSource(query, undefined, "generic"),
+      ]
+    : [
+        () => searchWithSource(query, { youtube: "video" }, "youtube"),
+        ...(soundCloudReady
+          ? [
+              () =>
+                searchWithSource(query, { soundcloud: "tracks" }, "soundcloud"),
+            ]
+          : []),
+        () => searchWithSource(query, undefined, "generic"),
+      ];
 
   for (const lookup of lookups) {
     const match = await lookup();
@@ -303,6 +545,49 @@ async function searchWithSource(query, source, sourceLabel) {
     };
   } catch {
     return null;
+  }
+}
+
+async function ensureSoundCloudReady() {
+  if (hasSoundCloudToken) return true;
+  if (soundCloudInitPromise) return soundCloudInitPromise;
+
+  soundCloudInitPromise = (async () => {
+    try {
+      const clientId =
+        process.env.SOUNDCLOUD_CLIENT_ID || (await play.getFreeClientID());
+
+      if (!clientId) {
+        return false;
+      }
+
+      await play.setToken({
+        soundcloud: {
+          client_id: clientId,
+        },
+      });
+
+      hasSoundCloudToken = true;
+      return true;
+    } catch (error) {
+      console.warn("SoundCloud indisponível no momento:", error?.message);
+      return false;
+    } finally {
+      soundCloudInitPromise = null;
+    }
+  })();
+
+  return soundCloudInitPromise;
+}
+
+async function safeValidateSoundCloud(query) {
+  const soundCloudReady = await ensureSoundCloudReady();
+  if (!soundCloudReady) return false;
+
+  try {
+    return await play.so_validate(query);
+  } catch {
+    return false;
   }
 }
 
