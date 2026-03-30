@@ -53,7 +53,7 @@ const CS_MAP_POOL = [
   "Ancient",
   "Anubis",
   "Dust2",
-  "Train",
+  "Overpass",
 ];
 let hasSoundCloudToken = false;
 let soundCloudInitPromise = null;
@@ -702,7 +702,7 @@ async function startMixCommand(message) {
   mixSessions.set(sessionId, session);
 
   const menu = new StringSelectMenuBuilder()
-    .setCustomId(`mix_captains_${sessionId}`)
+    .setCustomId(`mix_captains_${message.author.id}_${sessionId}`)
     .setPlaceholder("Selecione os 2 capitães")
     .setMinValues(2)
     .setMaxValues(2)
@@ -789,7 +789,7 @@ async function startPicksCommand(message) {
   picksSessions.set(sessionId, session);
 
   const menu = new StringSelectMenuBuilder()
-    .setCustomId(`picks_captains_${sessionId}`)
+    .setCustomId(`picks_captains_${message.author.id}_${sessionId}`)
     .setPlaceholder("Selecione os 2 capitães")
     .setMinValues(2)
     .setMaxValues(2)
@@ -826,7 +826,22 @@ async function startPicksCommand(message) {
 async function handleMixInteraction(interaction) {
   const parts = interaction.customId.split("_");
   const action = parts[1];
-  const sessionId = parts.slice(2).join("_");
+  let sessionId;
+
+  if (action === "captains" && parts.length >= 4) {
+    const ownerId = parts[2];
+    if (interaction.user.id !== ownerId) {
+      return interaction.reply({
+        content: "Só quem rodou o comando pode escolher os capitães.",
+        ephemeral: true,
+      });
+    }
+
+    sessionId = parts.slice(3).join("_");
+  } else {
+    sessionId = parts.slice(2).join("_");
+  }
+
   if (!action || !sessionId) {
     return interaction.reply({
       content: "Interação inválida para o mix.",
@@ -922,7 +937,22 @@ async function handleMixInteraction(interaction) {
 async function handlePicksInteraction(interaction) {
   const parts = interaction.customId.split("_");
   const action = parts[1];
-  const sessionId = parts.slice(2).join("_");
+  let sessionId;
+
+  if (action === "captains" && parts.length >= 4) {
+    const ownerId = parts[2];
+    if (interaction.user.id !== ownerId) {
+      return interaction.reply({
+        content: "Só quem rodou o comando pode escolher os capitães.",
+        ephemeral: true,
+      });
+    }
+
+    sessionId = parts.slice(3).join("_");
+  } else {
+    sessionId = parts.slice(2).join("_");
+  }
+
   if (!action || !sessionId) {
     return interaction.reply({
       content: "Interação inválida para picks/bans.",
