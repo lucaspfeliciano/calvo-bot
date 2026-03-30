@@ -9,10 +9,14 @@ const {
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
+  StreamType,
+  entersState,
+  VoiceConnectionStatus,
 } = require("@discordjs/voice");
 const fs = require("fs");
 const path = require("path");
 const play = require("play-dl");
+const ytdl = require("@distube/ytdl-core");
 const MAX_COLLECTION_TRACKS = 30;
 const JEFF_USER_ID = "691022104812060704";
 const RAMON_LIST_CHANNEL_ID = "1233506971190038700";
@@ -339,6 +343,11 @@ function getFirstImageFromPublic() {
   return path.join(publicDir, imageFile);
 }
 
+function isYouTubeUrl(url) {
+  if (!url) return false;
+  return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(url);
+}
+
 async function playMusic(guildId) {
   const queue = queues.get(guildId);
   if (!queue) return;
@@ -348,10 +357,31 @@ async function playMusic(guildId) {
   if (!song) return;
 
   try {
-    const stream = await play.stream(song.url);
-    const resource = createAudioResource(stream.stream, {
-      inputType: stream.type,
-    });
+    try {
+      await entersState(queue.connection, VoiceConnectionStatus.Ready, 10_000);
+    } catch {
+      // Alguns ambientes demoram para notificar READY; segue tentativa de tocar mesmo assim.
+    }
+
+    let resource;
+    try {
+      const stream = await play.stream(song.url);
+      resource = createAudioResource(stream.stream, {
+        inputType: stream.type,
+      });
+    } catch (streamError) {
+      if (!isYouTubeUrl(song.url)) throw streamError;
+
+      const ytStream = ytdl(song.url, {
+        filter: "audioonly",
+        quality: "highestaudio",
+        highWaterMark: 1 << 25,
+      });
+
+      resource = createAudioResource(ytStream, {
+        inputType: StreamType.Arbitrary,
+      });
+    }
 
     queue.player.play(resource);
   } catch (error) {
