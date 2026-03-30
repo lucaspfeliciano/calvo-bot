@@ -29,8 +29,8 @@ const TORUGO_FALLBACK_QUERIES = [
   "filho do piseiro junin",
   "hino do torugo",
 ];
-const POKER_REVEAL_DELAY_MS = 900;
-const POKER_BURN_DELAY_MS = 600;
+const POKER_REVEAL_DELAY_MS = 1600;
+const POKER_BURN_DELAY_MS = 1000;
 let hasSoundCloudToken = false;
 let soundCloudInitPromise = null;
 
@@ -339,7 +339,7 @@ function createGuildQueue(guild, voiceChannel, textChannel) {
 
 async function runNetinhoPoker(message) {
   const pokerMessagePromise = message.reply("🃏 Embaralhando as cartas...");
-  const players = await getPokerPlayers(message.guild, message.author.id);
+  const players = await getPokerPlayers(message.guild);
   const pokerMessage = await pokerMessagePromise;
 
   if (players.length < 2) {
@@ -567,7 +567,7 @@ function sleep(ms) {
   });
 }
 
-async function getPokerPlayers(guild, authorId) {
+async function getPokerPlayers(guild) {
   const onlineMembers = guild.presences.cache
     .filter((presence) => {
       if (presence.user?.bot) return false;
@@ -576,24 +576,7 @@ async function getPokerPlayers(guild, authorId) {
     .map((presence) => guild.members.cache.get(presence.userId))
     .filter(Boolean);
 
-  if (onlineMembers.length >= 2) return uniqueMembersById(onlineMembers);
-
-  const voiceMembers = guild.voiceStates.cache
-    .filter(
-      (voiceState) => voiceState.channelId && !voiceState.member?.user.bot,
-    )
-    .map((voiceState) => voiceState.member)
-    .filter(Boolean);
-
-  const combined = uniqueMembersById(
-    [
-      ...onlineMembers,
-      ...voiceMembers,
-      guild.members.cache.get(authorId),
-    ].filter(Boolean),
-  );
-
-  return combined;
+  return uniqueMembersById(onlineMembers);
 }
 
 function uniqueMembersById(members) {
