@@ -3,6 +3,10 @@ const {
   GatewayIntentBits,
   AttachmentBuilder,
   ChannelType,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
 } = require("discord.js");
 const {
   joinVoiceChannel,
@@ -34,6 +38,7 @@ const client = new Client({
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildPresences,
   ],
 });
 
@@ -61,15 +66,7 @@ client.on("messageCreate", async (message) => {
   let queue = queues.get(message.guild.id);
 
   if (command === "$netinho") {
-    const pokerJokes = [
-      "🃏 Netinho entrou de all-in com 7-2 e falou que era leitura avançada.",
-      "♠️ Netinho disse que blefe é arte. A mesa disse que era fanfic.",
-      "♥️ A mão do Netinho é tipo Wi-Fi ruim: parece forte, cai no river.",
-    ];
-
-    const randomJoke =
-      pokerJokes[Math.floor(Math.random() * pokerJokes.length)];
-    return message.reply(randomJoke);
+    return runNetinhoPoker(message);
   }
 
   if (command === "$jeff" || command === "$calvo") {
@@ -128,10 +125,12 @@ client.on("messageCreate", async (message) => {
 
     if (!queue.songs.length) {
       queue.songs.push(torugoSong);
+      updatePlayerPanel(message.guild.id);
       playMusic(message.guild.id);
     } else {
       // Insere para tocar imediatamente após parar a música atual.
       queue.songs.splice(1, 0, torugoSong);
+      updatePlayerPanel(message.guild.id);
       queue.player.stop();
     }
 
@@ -174,6 +173,7 @@ client.on("messageCreate", async (message) => {
     }
 
     queue.songs.push(...songsToAdd);
+    updatePlayerPanel(message.guild.id);
 
     const firstSong = songsToAdd[0];
     if (songsToAdd.length === 1) {
@@ -200,6 +200,7 @@ client.on("messageCreate", async (message) => {
   if (command === "$stop") {
     if (!queue) return;
     queue.songs = [];
+    updatePlayerPanel(message.guild.id);
     queue.player.stop();
     message.reply("⏹️ Sou calvo, parando de tocar");
   }
@@ -208,7 +209,102 @@ client.on("messageCreate", async (message) => {
     if (!queue) return;
     queue.connection.destroy();
     queues.delete(message.guild.id);
+    disablePlayerPanel(queue);
     message.reply("👋Sou calvo, saindo");
+  }
+
+  if (command === "$now") {
+    if (!queue || !queue.songs.length) {
+      return message.reply("Agora não tem nada tocando 😴");
+    }
+
+    const currentSong = queue.songs[0];
+    return message.reply(
+      `🎵 Tocando agora: ${currentSong.title || currentSong.url} (${currentSong.source || "desconhecida"})`,
+    );
+  }
+
+  if (command === "$queue") {
+    if (!queue || !queue.songs.length) {
+      return message.reply("Fila vazia no momento 🫗");
+    }
+
+    const currentSong = queue.songs[0];
+    const nextSongs = queue.songs.slice(1, 11);
+
+    const lines = [
+      `🎵 **Agora:** ${currentSong.title || currentSong.url}`,
+      `📦 **Na fila:** ${queue.songs.length - 1}`,
+    ];
+
+    if (nextSongs.length) {
+      lines.push("\n**Próximas:**");
+      nextSongs.forEach((song, index) => {
+        lines.push(`${index + 1}. ${song.title || song.url}`);
+      });
+    }
+
+    if (queue.songs.length > 11) {
+      lines.push(`... e mais ${queue.songs.length - 11} música(s)`);
+    }
+
+    return message.reply(lines.join("\n"));
+  }
+});
+
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isButton()) return;
+  if (!interaction.customId.startsWith("player_")) return;
+
+  const [, action, guildId] = interaction.customId.split("_");
+  if (!guildId || interaction.guildId !== guildId) {
+    return interaction.reply({
+      content: "Esse painel não é deste servidor.",
+      ephemeral: true,
+    });
+  }
+
+  const queue = queues.get(guildId);
+
+  if (action === "refresh") {
+    await updatePlayerPanel(guildId);
+    return interaction.reply({
+      content: "Painel atualizado.",
+      ephemeral: true,
+    });
+  }
+
+  if (!queue) {
+    return interaction.reply({
+      content: "Não tem nada tocando agora.",
+      ephemeral: true,
+    });
+  }
+
+  if (action === "skip") {
+    queue.player.stop();
+    await interaction.reply({ content: "⏭️ Música pulada.", ephemeral: true });
+    return updatePlayerPanel(guildId);
+  }
+
+  if (action === "stop") {
+    queue.songs = [];
+    queue.player.stop();
+    await interaction.reply({
+      content: "⏹️ Reprodução parada.",
+      ephemeral: true,
+    });
+    return updatePlayerPanel(guildId);
+  }
+
+  if (action === "leave") {
+    queue.connection.destroy();
+    queues.delete(guildId);
+    await interaction.reply({
+      content: "👋 Saí do canal de voz.",
+      ephemeral: true,
+    });
+    return disablePlayerPanel(queue);
   }
 });
 
@@ -217,6 +313,7 @@ function createGuildQueue(guild, voiceChannel, textChannel) {
     songs: [],
     player: createAudioPlayer(),
     textChannel,
+    controlMessage: null,
     connection: joinVoiceChannel({
       channelId: voiceChannel.id,
       guildId: guild.id,
@@ -227,17 +324,331 @@ function createGuildQueue(guild, voiceChannel, textChannel) {
   queues.set(guild.id, queue);
 
   queue.player.on(AudioPlayerStatus.Idle, () => {
-    queue.songs.shift();
-    if (queue.songs.length) {
-      playMusic(guild.id);
-    } else {
-      queue.connection.destroy();
-      queues.delete(guild.id);
-    }
+    handleQueueIdle(guild.id);
   });
 
   queue.connection.subscribe(queue.player);
   return queue;
+}
+
+async function runNetinhoPoker(message) {
+  const players = await getPokerPlayers(message.guild, message.author.id);
+  if (players.length < 2) {
+    return message.reply(
+      "Não achei jogadores online suficientes pra mesa do Netinho. Preciso de pelo menos 2.",
+    );
+  }
+
+  const selectedPlayers = shuffle([...players]).slice(0, 8);
+  const deck = createDeck();
+  shuffle(deck);
+
+  const communityCards = [
+    drawCard(deck),
+    drawCard(deck),
+    drawCard(deck),
+    drawCard(deck),
+    drawCard(deck),
+  ];
+  const results = selectedPlayers.map((member) => {
+    const holeCards = [drawCard(deck), drawCard(deck)];
+    const bestHand = evaluateSevenCards([...holeCards, ...communityCards]);
+    return {
+      member,
+      holeCards,
+      bestHand,
+    };
+  });
+
+  results.sort((a, b) => compareHandsDesc(a.bestHand, b.bestHand));
+  const topHand = results[0].bestHand;
+  const winners = results.filter(
+    (result) => compareHandsDesc(result.bestHand, topHand) === 0,
+  );
+
+  const lines = [
+    "🃏 **Mesa do Netinho aberta!**",
+    `Mesa: ${communityCards.map(formatCard).join(" ")}`,
+    "",
+    "**Resultados:**",
+  ];
+
+  results.forEach((result, index) => {
+    lines.push(
+      `${index + 1}. ${result.member.displayName}: ${result.holeCards
+        .map(formatCard)
+        .join(" ")} -> ${result.bestHand.name}`,
+    );
+  });
+
+  lines.push("");
+  if (winners.length === 1) {
+    lines.push(
+      `🏆 Vencedor: **${winners[0].member.displayName}** com ${winners[0].bestHand.name}!`,
+    );
+  } else {
+    lines.push(
+      `🤝 Split pot entre: **${winners.map((winner) => winner.member.displayName).join(", ")}** com ${winners[0].bestHand.name}!`,
+    );
+  }
+
+  return message.reply(lines.join("\n"));
+}
+
+async function getPokerPlayers(guild, authorId) {
+  try {
+    await guild.members.fetch();
+  } catch {
+    // Se falhar, segue com cache existente.
+  }
+
+  const members = [...guild.members.cache.values()].filter(
+    (member) => !member.user.bot,
+  );
+
+  const onlineMembers = members.filter((member) => {
+    const status = member.presence?.status;
+    return status && status !== "offline";
+  });
+
+  if (onlineMembers.length >= 2) return onlineMembers;
+
+  const voiceMembers = guild.voiceStates.cache
+    .filter(
+      (voiceState) => voiceState.channelId && !voiceState.member?.user.bot,
+    )
+    .map((voiceState) => voiceState.member)
+    .filter(Boolean);
+
+  if (voiceMembers.length >= 2) return uniqueMembersById(voiceMembers);
+
+  const fallback = uniqueMembersById(
+    [...members, guild.members.cache.get(authorId)].filter(Boolean),
+  );
+
+  return fallback;
+}
+
+function uniqueMembersById(members) {
+  const byId = new Map();
+  members.forEach((member) => {
+    byId.set(member.id, member);
+  });
+  return [...byId.values()];
+}
+
+function createDeck() {
+  const suits = ["H", "D", "C", "S"];
+  const ranks = [
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "T",
+    "J",
+    "Q",
+    "K",
+    "A",
+  ];
+  const deck = [];
+
+  suits.forEach((suit) => {
+    ranks.forEach((rank) => {
+      deck.push({ rank, suit });
+    });
+  });
+
+  return deck;
+}
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function drawCard(deck) {
+  return deck.pop();
+}
+
+function formatCard(card) {
+  return `${card.rank}${card.suit}`;
+}
+
+function cardValue(rank) {
+  const values = {
+    2: 2,
+    3: 3,
+    4: 4,
+    5: 5,
+    6: 6,
+    7: 7,
+    8: 8,
+    9: 9,
+    T: 10,
+    J: 11,
+    Q: 12,
+    K: 13,
+    A: 14,
+  };
+
+  return values[rank];
+}
+
+function evaluateSevenCards(cards) {
+  let best = null;
+
+  for (let a = 0; a < cards.length - 4; a += 1) {
+    for (let b = a + 1; b < cards.length - 3; b += 1) {
+      for (let c = b + 1; c < cards.length - 2; c += 1) {
+        for (let d = c + 1; d < cards.length - 1; d += 1) {
+          for (let e = d + 1; e < cards.length; e += 1) {
+            const hand = evaluateFiveCards([
+              cards[a],
+              cards[b],
+              cards[c],
+              cards[d],
+              cards[e],
+            ]);
+
+            if (!best || compareHandsDesc(hand, best) < 0) {
+              best = hand;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return best;
+}
+
+function evaluateFiveCards(cards) {
+  const sortedValues = cards
+    .map((card) => cardValue(card.rank))
+    .sort((a, b) => b - a);
+  const isFlush = cards.every((card) => card.suit === cards[0].suit);
+  const straightHigh = getStraightHigh(sortedValues);
+
+  const countMap = new Map();
+  sortedValues.forEach((value) => {
+    countMap.set(value, (countMap.get(value) || 0) + 1);
+  });
+
+  const groups = [...countMap.entries()].sort((a, b) => {
+    if (b[1] !== a[1]) return b[1] - a[1];
+    return b[0] - a[0];
+  });
+
+  if (isFlush && straightHigh) {
+    return createHand(8, [straightHigh], "Straight Flush");
+  }
+
+  if (groups[0][1] === 4) {
+    const quad = groups[0][0];
+    const kicker = groups.find((group) => group[0] !== quad)[0];
+    return createHand(7, [quad, kicker], "Quadra");
+  }
+
+  if (groups[0][1] === 3 && groups[1]?.[1] >= 2) {
+    return createHand(6, [groups[0][0], groups[1][0]], "Full House");
+  }
+
+  if (isFlush) {
+    return createHand(5, sortedValues, "Flush");
+  }
+
+  if (straightHigh) {
+    return createHand(4, [straightHigh], "Sequencia");
+  }
+
+  if (groups[0][1] === 3) {
+    const kickers = groups
+      .filter((group) => group[1] === 1)
+      .map((group) => group[0])
+      .sort((a, b) => b - a);
+    return createHand(3, [groups[0][0], ...kickers], "Trinca");
+  }
+
+  if (groups[0][1] === 2 && groups[1]?.[1] === 2) {
+    const pairValues = [groups[0][0], groups[1][0]].sort((a, b) => b - a);
+    const kicker = groups.find((group) => group[1] === 1)[0];
+    return createHand(2, [...pairValues, kicker], "Dois Pares");
+  }
+
+  if (groups[0][1] === 2) {
+    const pairValue = groups[0][0];
+    const kickers = groups
+      .filter((group) => group[1] === 1)
+      .map((group) => group[0])
+      .sort((a, b) => b - a);
+    return createHand(1, [pairValue, ...kickers], "Par");
+  }
+
+  return createHand(0, sortedValues, "Carta Alta");
+}
+
+function createHand(category, tiebreak, name) {
+  return { category, tiebreak, name };
+}
+
+function getStraightHigh(valuesDesc) {
+  const uniqueDesc = [...new Set(valuesDesc)].sort((a, b) => b - a);
+  if (uniqueDesc.includes(14)) {
+    uniqueDesc.push(1);
+  }
+
+  let run = 1;
+  let high = uniqueDesc[0];
+
+  for (let i = 1; i < uniqueDesc.length; i += 1) {
+    if (uniqueDesc[i - 1] - 1 === uniqueDesc[i]) {
+      run += 1;
+      if (run >= 5) return high;
+    } else {
+      run = 1;
+      high = uniqueDesc[i];
+    }
+  }
+
+  return null;
+}
+
+function compareHandsDesc(a, b) {
+  if (a.category !== b.category) {
+    return b.category - a.category;
+  }
+
+  const maxLength = Math.max(a.tiebreak.length, b.tiebreak.length);
+  for (let i = 0; i < maxLength; i += 1) {
+    const left = a.tiebreak[i] || 0;
+    const right = b.tiebreak[i] || 0;
+    if (left !== right) return right - left;
+  }
+
+  return 0;
+}
+
+async function handleQueueIdle(guildId) {
+  const queue = queues.get(guildId);
+  if (!queue) return;
+
+  queue.songs.shift();
+  await updatePlayerPanel(guildId);
+
+  if (queue.songs.length) {
+    playMusic(guildId);
+  } else {
+    queue.connection.destroy();
+    queues.delete(guildId);
+    disablePlayerPanel(queue);
+  }
 }
 
 async function muteJeff(guild, reason) {
@@ -364,6 +775,7 @@ async function playMusic(guildId) {
     });
 
     queue.player.play(resource);
+    updatePlayerPanel(guildId);
   } catch (error) {
     console.error("Erro ao tocar música:", error);
     const isYouTubeBotBlock = /sign in to confirm/i.test(
@@ -380,6 +792,7 @@ async function playMusic(guildId) {
 
       if (fallbackSong) {
         queue.songs[0] = fallbackSong;
+        updatePlayerPanel(guildId);
         if (queue.textChannel) {
           queue.textChannel.send(
             `⚠️ Falhou aqui, tentando fallback: ${fallbackSong.title || fallbackSong.url}`,
@@ -391,6 +804,7 @@ async function playMusic(guildId) {
     }
 
     queue.songs.shift();
+    updatePlayerPanel(guildId);
     if (queue.textChannel) {
       queue.textChannel.send("⚠️ Não consegui tocar essa música, pulando...");
     }
@@ -400,7 +814,101 @@ async function playMusic(guildId) {
     } else {
       queue.connection.destroy();
       queues.delete(guildId);
+      disablePlayerPanel(queue);
     }
+  }
+}
+
+function buildPlayerControls(guildId, disabled) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`player_skip_${guildId}`)
+      .setLabel("Pular")
+      .setStyle(ButtonStyle.Primary)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`player_stop_${guildId}`)
+      .setLabel("Parar")
+      .setStyle(ButtonStyle.Danger)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`player_leave_${guildId}`)
+      .setLabel("Sair")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId(`player_refresh_${guildId}`)
+      .setLabel("Atualizar")
+      .setStyle(ButtonStyle.Secondary),
+  );
+}
+
+function buildPlayerEmbed(queue) {
+  const currentSong = queue?.songs?.[0];
+  const queueLength = Math.max((queue?.songs?.length || 0) - 1, 0);
+
+  const embed = new EmbedBuilder().setTitle("Jeff Player");
+
+  if (!currentSong) {
+    embed
+      .setDescription("Sem música tocando no momento.")
+      .setColor(0x808080)
+      .addFields({ name: "Fila", value: "0" });
+    return embed;
+  }
+
+  embed
+    .setDescription(`🎵 ${currentSong.title || currentSong.url}`)
+    .setColor(0x00b894)
+    .addFields(
+      {
+        name: "Fonte",
+        value: String(currentSong.source || "desconhecida"),
+        inline: true,
+      },
+      { name: "Na fila", value: String(queueLength), inline: true },
+    );
+
+  return embed;
+}
+
+async function updatePlayerPanel(guildId) {
+  const queue = queues.get(guildId);
+  if (!queue || !queue.textChannel) return;
+
+  const embed = buildPlayerEmbed(queue);
+  const controls = buildPlayerControls(guildId, !queue.songs.length);
+
+  try {
+    if (queue.controlMessage) {
+      await queue.controlMessage.edit({
+        embeds: [embed],
+        components: [controls],
+      });
+      return;
+    }
+
+    queue.controlMessage = await queue.textChannel.send({
+      embeds: [embed],
+      components: [controls],
+    });
+  } catch {
+    queue.controlMessage = null;
+  }
+}
+
+async function disablePlayerPanel(queue) {
+  if (!queue?.controlMessage) return;
+
+  try {
+    const embed = buildPlayerEmbed({ songs: [] });
+    const controls = buildPlayerControls("offline", true);
+    await queue.controlMessage.edit({
+      embeds: [embed],
+      components: [controls],
+    });
+  } catch {
+    // Ignore erro de edição de mensagem antiga/apagada.
   }
 }
 
