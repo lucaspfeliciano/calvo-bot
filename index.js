@@ -29,6 +29,19 @@ const TORUGO_FALLBACK_QUERIES = [
   "filho do piseiro junin",
   "hino do torugo",
 ];
+const EDUARDO_QUOTES = [
+  "💪 Eduardo, perder faz parte. O próximo campeonato começa no treino de hoje.",
+  "🏆 Quer levar campeonato a sério? Disciplina no treino, cabeça fria no jogo e fome de evolução.",
+  "⚽ No futevôlei, fundamento ganha jogo: posicionamento, comunicação e regularidade.",
+  "🔥 Você não precisa ganhar sempre, mas precisa competir com atitude de quem quer crescer.",
+  "🎯 Cada erro no campeonato é dado pra melhorar. Anota, treina e volta mais casca grossa.",
+  "🧠 No ponto decisivo, vence quem pensa rápido e executa simples.",
+  "📈 Evolução no futevôlei vem de repetição: recepção limpa, levantamento consciente e ataque com leitura.",
+  "🤝 Dupla forte é conversa o tempo todo. Chama bola, orienta e confia no parceiro.",
+  "🏅 Campeonato se ganha antes: rotina, foco e treino com intenção.",
+  "🚀 Jogo grande pede cabeça grande: menos desculpa, mais ajuste e intensidade.",
+  "😤 Você até jogou bem, só precisa dar uma trabalhada na comunicação, jogo em dupla, posicionamento, coordenação, timing, confiança, controle de bola, movimentação e noção de jogo que você vai virar um MONSTRO no futevôlei!",
+];
 const POKER_REVEAL_DELAY_MS = 1600;
 const POKER_BURN_DELAY_MS = 1000;
 let hasSoundCloudToken = false;
@@ -151,9 +164,7 @@ client.on("messageCreate", async (message) => {
   }
 
   if (command === "$eduardo") {
-    return message.reply(
-      "💪 Eduardo, campeonato não define ninguém. Levanta a cabeça, treina e volta mais forte. Tamo junto!",
-    );
+    return message.reply(pickRandom(EDUARDO_QUOTES));
   }
 
   if (command === "$tadeu") {
@@ -573,6 +584,10 @@ function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function pickRandom(items) {
+  return items[Math.floor(Math.random() * items.length)];
 }
 
 async function getPokerPlayers(guild, channelId) {
