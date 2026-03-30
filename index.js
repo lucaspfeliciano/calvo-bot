@@ -7,6 +7,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  StringSelectMenuBuilder,
 } = require("discord.js");
 const {
   joinVoiceChannel,
@@ -44,6 +45,16 @@ const EDUARDO_QUOTES = [
 ];
 const POKER_REVEAL_DELAY_MS = 1600;
 const POKER_BURN_DELAY_MS = 1000;
+const MIX_TEAM_SIZE = 5;
+const CS_MAP_POOL = [
+  "Mirage",
+  "Inferno",
+  "Nuke",
+  "Ancient",
+  "Anubis",
+  "Dust2",
+  "Train",
+];
 let hasSoundCloudToken = false;
 let soundCloudInitPromise = null;
 
@@ -58,6 +69,8 @@ const client = new Client({
 });
 
 const queues = new Map();
+const mixSessions = new Map();
+const picksSessions = new Map();
 
 client.once("clientReady", async () => {
   await ensureSoundCloudReady();
@@ -77,6 +90,8 @@ client.on("messageCreate", async (message) => {
     "$skip",
     "$torugo",
     "$netinho",
+    "$mix",
+    "$picks",
   ]);
   const voiceChannel = message.member?.voice.channel;
   if (!voiceChannel && voiceRequiredCommands.has(command)) {
@@ -204,6 +219,14 @@ client.on("messageCreate", async (message) => {
         `✨ Hope (d12): **${hopeRoll}**`,
       ].join("\n"),
     );
+  }
+
+  if (command === "$mix") {
+    return startMixCommand(message);
+  }
+
+  if (command === "$picks") {
+    return startPicksCommand(message);
   }
 
   if (command === "$tadeu") {
@@ -366,6 +389,18 @@ client.on("interactionCreate", async (interaction) => {
       ephemeral: true,
     });
     return disablePlayerPanel(queue);
+  }
+});
+
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isStringSelectMenu()) return;
+
+  if (interaction.customId.startsWith("mix_")) {
+    return handleMixInteraction(interaction);
+  }
+
+  if (interaction.customId.startsWith("picks_")) {
+    return handlePicksInteraction(interaction);
   }
 });
 
@@ -623,6 +658,551 @@ function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function startMixCommand(message) {
+  const voiceChannel = message.member?.voice?.channel;
+  if (!voiceChannel) {
+    return message.reply("Entra em um canal de voz pra organizar o mix.");
+  }
+
+  const participants = [...voiceChannel.members.values()]
+    .filter((member) => !member.user.bot)
+    .map((member) => ({
+      id: member.id,
+      name: member.displayName,
+    }));
+
+  if (participants.length < MIX_TEAM_SIZE * 2) {
+    return message.reply(
+      `Preciso de pelo menos ${MIX_TEAM_SIZE * 2} pessoas no canal pra montar duas lines de ${MIX_TEAM_SIZE}.`,
+    );
+  }
+
+  if (participants.length > 25) {
+    return message.reply(
+      "Tem gente demais no canal pra seleção por menu (limite Discord: 25).",
+    );
+  }
+
+  const sessionId = createSessionId("mix");
+  const session = {
+    id: sessionId,
+    guildId: message.guild.id,
+    channelId: voiceChannel.id,
+    creatorId: message.author.id,
+    participants,
+    captains: [],
+    teams: {},
+    available: [],
+    turn: null,
+    stage: "captains",
+  };
+
+  mixSessions.set(sessionId, session);
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`mix_captains_${sessionId}`)
+    .setPlaceholder("Selecione os 2 capitães")
+    .setMinValues(2)
+    .setMaxValues(2)
+    .addOptions(
+      participants.map((participant) => ({
+        label: truncateLabel(participant.name),
+        value: participant.id,
+      })),
+    );
+
+  const row = new ActionRowBuilder().addComponents(menu);
+
+  return message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("Mix - Seleção de Capitães")
+        .setColor(0x3498db)
+        .setDescription(
+          [
+            "Quem executou o comando deve escolher 2 capitães.",
+            "",
+            "**Participantes do canal:**",
+            ...participants.map(
+              (participant, index) =>
+                `${index + 1}. ${participant.name} (<@${participant.id}>)`,
+            ),
+          ].join("\n"),
+        ),
+    ],
+    components: [row],
+  });
+}
+
+async function startPicksCommand(message) {
+  const voiceChannel = message.member?.voice?.channel;
+  if (!voiceChannel) {
+    return message.reply(
+      "Entra em um canal de voz pra começar o veto de mapas.",
+    );
+  }
+
+  const participants = [...voiceChannel.members.values()]
+    .filter((member) => !member.user.bot)
+    .map((member) => ({
+      id: member.id,
+      name: member.displayName,
+    }));
+
+  if (participants.length < 2) {
+    return message.reply(
+      "Preciso de pelo menos 2 pessoas no canal pra escolher capitães.",
+    );
+  }
+
+  if (participants.length > 25) {
+    return message.reply(
+      "Tem gente demais no canal pra seleção por menu (limite Discord: 25).",
+    );
+  }
+
+  const sessionId = createSessionId("picks");
+  const session = {
+    id: sessionId,
+    guildId: message.guild.id,
+    channelId: voiceChannel.id,
+    creatorId: message.author.id,
+    participants,
+    captains: [],
+    stage: "captains",
+    mapPool: [...CS_MAP_POOL],
+    steps: [
+      { captainIndex: 0, action: "ban" },
+      { captainIndex: 1, action: "ban" },
+      { captainIndex: 0, action: "pick" },
+      { captainIndex: 1, action: "pick" },
+      { captainIndex: 0, action: "ban" },
+      { captainIndex: 1, action: "ban" },
+    ],
+    stepIndex: 0,
+    bans: [],
+    picks: [],
+  };
+
+  picksSessions.set(sessionId, session);
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`picks_captains_${sessionId}`)
+    .setPlaceholder("Selecione os 2 capitães")
+    .setMinValues(2)
+    .setMaxValues(2)
+    .addOptions(
+      participants.map((participant) => ({
+        label: truncateLabel(participant.name),
+        value: participant.id,
+      })),
+    );
+
+  const row = new ActionRowBuilder().addComponents(menu);
+
+  return message.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("Picks/Bans - Seleção de Capitães")
+        .setColor(0xe67e22)
+        .setDescription(
+          [
+            "Quem executou o comando deve escolher 2 capitães.",
+            "",
+            "**Participantes do canal:**",
+            ...participants.map(
+              (participant, index) =>
+                `${index + 1}. ${participant.name} (<@${participant.id}>)`,
+            ),
+          ].join("\n"),
+        ),
+    ],
+    components: [row],
+  });
+}
+
+async function handleMixInteraction(interaction) {
+  const [, action, sessionId] = interaction.customId.split("_");
+  const session = mixSessions.get(sessionId);
+  if (!session) {
+    return interaction.reply({
+      content: "Essa sessão de mix já acabou ou expirou.",
+      ephemeral: true,
+    });
+  }
+
+  if (action === "captains") {
+    if (interaction.user.id !== session.creatorId) {
+      return interaction.reply({
+        content: "Só quem rodou o comando pode escolher os capitães.",
+        ephemeral: true,
+      });
+    }
+
+    const captains = [...new Set(interaction.values)].slice(0, 2);
+    if (captains.length < 2) {
+      return interaction.reply({
+        content: "Selecione dois capitães diferentes.",
+        ephemeral: true,
+      });
+    }
+
+    session.captains = captains;
+    session.teams[captains[0]] = [captains[0]];
+    session.teams[captains[1]] = [captains[1]];
+    session.available = session.participants
+      .map((participant) => participant.id)
+      .filter((id) => !captains.includes(id));
+    session.turn = captains[0];
+    session.stage = "draft";
+    normalizeMixTurn(session);
+
+    return interaction.update(buildMixDraftPayload(session));
+  }
+
+  if (action === "pick") {
+    if (session.stage !== "draft") {
+      return interaction.reply({
+        content: "Esse draft já foi finalizado.",
+        ephemeral: true,
+      });
+    }
+
+    normalizeMixTurn(session);
+
+    if (interaction.user.id !== session.turn) {
+      return interaction.reply({
+        content: "Não é sua vez de pickar.",
+        ephemeral: true,
+      });
+    }
+
+    const pickedId = interaction.values[0];
+    if (!session.available.includes(pickedId)) {
+      return interaction.reply({
+        content: "Esse jogador não está mais disponível.",
+        ephemeral: true,
+      });
+    }
+
+    session.teams[session.turn].push(pickedId);
+    session.available = session.available.filter((id) => id !== pickedId);
+
+    if (isMixFinished(session)) {
+      mixSessions.delete(sessionId);
+      return interaction.update(buildMixFinishedPayload(session));
+    }
+
+    const otherCaptain = session.captains.find((id) => id !== session.turn);
+    session.turn = otherCaptain;
+    normalizeMixTurn(session);
+
+    if (isMixFinished(session)) {
+      mixSessions.delete(sessionId);
+      return interaction.update(buildMixFinishedPayload(session));
+    }
+
+    return interaction.update(buildMixDraftPayload(session));
+  }
+
+  return null;
+}
+
+async function handlePicksInteraction(interaction) {
+  const [, action, sessionId] = interaction.customId.split("_");
+  const session = picksSessions.get(sessionId);
+  if (!session) {
+    return interaction.reply({
+      content: "Essa sessão de picks já acabou ou expirou.",
+      ephemeral: true,
+    });
+  }
+
+  if (action === "captains") {
+    if (interaction.user.id !== session.creatorId) {
+      return interaction.reply({
+        content: "Só quem rodou o comando pode escolher os capitães.",
+        ephemeral: true,
+      });
+    }
+
+    const captains = [...new Set(interaction.values)].slice(0, 2);
+    if (captains.length < 2) {
+      return interaction.reply({
+        content: "Selecione dois capitães diferentes.",
+        ephemeral: true,
+      });
+    }
+
+    session.captains = captains;
+    session.stage = "veto";
+    session.stepIndex = 0;
+
+    return interaction.update(buildPicksPayload(session));
+  }
+
+  if (action === "map") {
+    if (session.stage !== "veto") {
+      return interaction.reply({
+        content: "Essa sessão de picks/bans já foi finalizada.",
+        ephemeral: true,
+      });
+    }
+
+    const step = session.steps[session.stepIndex];
+    if (!step) {
+      picksSessions.delete(sessionId);
+      return interaction.update(buildPicksFinishedPayload(session));
+    }
+
+    const currentCaptain = session.captains[step.captainIndex];
+    if (interaction.user.id !== currentCaptain) {
+      return interaction.reply({
+        content: "Não é sua vez no veto.",
+        ephemeral: true,
+      });
+    }
+
+    const selectedMap = interaction.values[0];
+    if (!session.mapPool.includes(selectedMap)) {
+      return interaction.reply({
+        content: "Esse mapa não está disponível.",
+        ephemeral: true,
+      });
+    }
+
+    session.mapPool = session.mapPool.filter(
+      (mapName) => mapName !== selectedMap,
+    );
+
+    if (step.action === "ban") {
+      session.bans.push({ map: selectedMap, captain: currentCaptain });
+    } else {
+      session.picks.push({ map: selectedMap, captain: currentCaptain });
+    }
+
+    session.stepIndex += 1;
+
+    if (session.stepIndex >= session.steps.length) {
+      session.stage = "done";
+      picksSessions.delete(sessionId);
+      return interaction.update(buildPicksFinishedPayload(session));
+    }
+
+    return interaction.update(buildPicksPayload(session));
+  }
+
+  return null;
+}
+
+function buildMixDraftPayload(session) {
+  const captainA = session.captains[0];
+  const captainB = session.captains[1];
+  const teamA = (session.teams[captainA] || []).map((id) => `<@${id}>`);
+  const teamB = (session.teams[captainB] || []).map((id) => `<@${id}>`);
+  const available = session.available;
+
+  const embed = new EmbedBuilder()
+    .setTitle("Mix - Draft em andamento")
+    .setColor(0x1abc9c)
+    .setDescription(
+      [
+        `Capitão A: <@${captainA}>`,
+        `Capitão B: <@${captainB}>`,
+        `Vez de: <@${session.turn}>`,
+        "",
+        `**Time A (${teamA.length}/${MIX_TEAM_SIZE})**`,
+        teamA.join("\n") || "-",
+        "",
+        `**Time B (${teamB.length}/${MIX_TEAM_SIZE})**`,
+        teamB.join("\n") || "-",
+        "",
+        `Disponíveis: ${available.length}`,
+      ].join("\n"),
+    );
+
+  const options = available.slice(0, 25).map((id) => ({
+    label: truncateLabel(getParticipantName(session.participants, id)),
+    value: id,
+  }));
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`mix_pick_${session.id}`)
+    .setPlaceholder("Escolha 1 jogador para o seu time")
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(options);
+
+  return {
+    embeds: [embed],
+    components: [new ActionRowBuilder().addComponents(menu)],
+  };
+}
+
+function buildMixFinishedPayload(session) {
+  const captainA = session.captains[0];
+  const captainB = session.captains[1];
+  const teamA = (session.teams[captainA] || []).map((id) => `<@${id}>`);
+  const teamB = (session.teams[captainB] || []).map((id) => `<@${id}>`);
+
+  return {
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("Mix fechado")
+        .setColor(0x2ecc71)
+        .setDescription(
+          [
+            "As lines foram formadas.",
+            "",
+            "**Time A**",
+            teamA.join("\n") || "-",
+            "",
+            "**Time B**",
+            teamB.join("\n") || "-",
+          ].join("\n"),
+        ),
+    ],
+    components: [],
+  };
+}
+
+function buildPicksPayload(session) {
+  const step = session.steps[session.stepIndex];
+  const currentCaptain = session.captains[step.captainIndex];
+  const actionLabel = step.action === "ban" ? "BAN" : "PICK";
+  const actionText =
+    step.action === "ban"
+      ? `<@${currentCaptain}> deve banir 1 mapa.`
+      : `<@${currentCaptain}> deve pickar 1 mapa.`;
+
+  const embed = new EmbedBuilder()
+    .setTitle("Picks/Bans de Mapas")
+    .setColor(0xf1c40f)
+    .setDescription(
+      [
+        `Capitão A: <@${session.captains[0]}>`,
+        `Capitão B: <@${session.captains[1]}>`,
+        "",
+        `**Turno ${session.stepIndex + 1}/${session.steps.length} - ${actionLabel}**`,
+        actionText,
+        "",
+        "**Picks até agora:**",
+        session.picks.length
+          ? session.picks
+              .map(
+                (pick, index) =>
+                  `${index + 1}. ${pick.map} - <@${pick.captain}>`,
+              )
+              .join("\n")
+          : "-",
+        "",
+        "**Bans até agora:**",
+        session.bans.length
+          ? session.bans
+              .map(
+                (ban, index) => `${index + 1}. ${ban.map} - <@${ban.captain}>`,
+              )
+              .join("\n")
+          : "-",
+        "",
+        `Mapas restantes: ${session.mapPool.join(", ") || "-"}`,
+      ].join("\n"),
+    );
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`picks_map_${session.id}`)
+    .setPlaceholder("Escolha o mapa")
+    .setMinValues(1)
+    .setMaxValues(1)
+    .addOptions(
+      session.mapPool.map((mapName) => ({
+        label: mapName,
+        value: mapName,
+      })),
+    );
+
+  return {
+    embeds: [embed],
+    components: [new ActionRowBuilder().addComponents(menu)],
+  };
+}
+
+function buildPicksFinishedPayload(session) {
+  const decider = session.mapPool[0] || "Sem decider";
+
+  return {
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("Picks/Bans finalizados")
+        .setColor(0x2ecc71)
+        .setDescription(
+          [
+            `Capitão A: <@${session.captains[0]}>`,
+            `Capitão B: <@${session.captains[1]}>`,
+            "",
+            "**Picks:**",
+            session.picks.length
+              ? session.picks
+                  .map(
+                    (pick, index) =>
+                      `${index + 1}. ${pick.map} - <@${pick.captain}>`,
+                  )
+                  .join("\n")
+              : "-",
+            "",
+            "**Bans:**",
+            session.bans.length
+              ? session.bans
+                  .map(
+                    (ban, index) =>
+                      `${index + 1}. ${ban.map} - <@${ban.captain}>`,
+                  )
+                  .join("\n")
+              : "-",
+            "",
+            `**Decider:** ${decider}`,
+          ].join("\n"),
+        ),
+    ],
+    components: [],
+  };
+}
+
+function normalizeMixTurn(session) {
+  const [captainA, captainB] = session.captains;
+  const teamASize = (session.teams[captainA] || []).length;
+  const teamBSize = (session.teams[captainB] || []).length;
+
+  if (teamASize >= MIX_TEAM_SIZE && teamBSize < MIX_TEAM_SIZE) {
+    session.turn = captainB;
+  }
+
+  if (teamBSize >= MIX_TEAM_SIZE && teamASize < MIX_TEAM_SIZE) {
+    session.turn = captainA;
+  }
+}
+
+function isMixFinished(session) {
+  const [captainA, captainB] = session.captains;
+  return (
+    (session.teams[captainA] || []).length >= MIX_TEAM_SIZE &&
+    (session.teams[captainB] || []).length >= MIX_TEAM_SIZE
+  );
+}
+
+function createSessionId(prefix) {
+  return `${prefix}_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+}
+
+function getParticipantName(participants, id) {
+  return participants.find((participant) => participant.id === id)?.name || id;
+}
+
+function truncateLabel(label) {
+  if (!label) return "Sem nome";
+  return label.length > 100 ? `${label.slice(0, 97)}...` : label;
 }
 
 function pickRandom(items) {
