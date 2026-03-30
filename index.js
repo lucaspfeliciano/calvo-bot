@@ -824,7 +824,16 @@ async function startPicksCommand(message) {
 }
 
 async function handleMixInteraction(interaction) {
-  const [, action, sessionId] = interaction.customId.split("_");
+  const parts = interaction.customId.split("_");
+  const action = parts[1];
+  const sessionId = parts.slice(2).join("_");
+  if (!action || !sessionId) {
+    return interaction.reply({
+      content: "Interação inválida para o mix.",
+      ephemeral: true,
+    });
+  }
+
   const session = mixSessions.get(sessionId);
   if (!session) {
     return interaction.reply({
@@ -911,7 +920,16 @@ async function handleMixInteraction(interaction) {
 }
 
 async function handlePicksInteraction(interaction) {
-  const [, action, sessionId] = interaction.customId.split("_");
+  const parts = interaction.customId.split("_");
+  const action = parts[1];
+  const sessionId = parts.slice(2).join("_");
+  if (!action || !sessionId) {
+    return interaction.reply({
+      content: "Interação inválida para picks/bans.",
+      ephemeral: true,
+    });
+  }
+
   const session = picksSessions.get(sessionId);
   if (!session) {
     return interaction.reply({
