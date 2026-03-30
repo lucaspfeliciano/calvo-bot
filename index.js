@@ -38,6 +38,7 @@ const client = new Client({
     GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildPresences,
   ],
 });
 
@@ -365,33 +366,123 @@ async function runNetinhoPoker(message) {
     (result) => compareHandsDesc(result.bestHand, topHand) === 0,
   );
 
-  const lines = [
-    "🃏 **Mesa do Netinho aberta!**",
-    `Mesa: ${communityCards.map(formatCard).join(" ")}`,
-    "",
-    "**Resultados:**",
-  ];
-
-  results.forEach((result, index) => {
-    lines.push(
-      `${index + 1}. ${result.member.displayName}: ${result.holeCards
-        .map(formatCard)
-        .join(" ")} -> ${result.bestHand.name}`,
-    );
+  const pokerMessage = await message.reply({
+    embeds: [buildPokerEmbed({ results, step: "preflop" })],
   });
 
-  lines.push("");
-  if (winners.length === 1) {
-    lines.push(
-      `🏆 Vencedor: **${winners[0].member.displayName}** com ${winners[0].bestHand.name}!`,
+  await sleep(1500);
+  await pokerMessage.edit({
+    embeds: [
+      buildPokerEmbed({
+        results,
+        communityCards,
+        revealedCount: 3,
+        step: "flop",
+      }),
+    ],
+  });
+
+  await sleep(1500);
+  await pokerMessage.edit({
+    embeds: [
+      buildPokerEmbed({
+        results,
+        communityCards,
+        revealedCount: 4,
+        step: "turn",
+      }),
+    ],
+  });
+
+  await sleep(1500);
+  await pokerMessage.edit({
+    embeds: [
+      buildPokerEmbed({
+        results,
+        communityCards,
+        revealedCount: 5,
+        step: "river",
+      }),
+    ],
+  });
+
+  await sleep(1300);
+  return pokerMessage.edit({
+    embeds: [
+      buildPokerEmbed({
+        results,
+        communityCards,
+        revealedCount: 5,
+        step: "showdown",
+        winners,
+      }),
+    ],
+  });
+}
+
+function buildPokerEmbed({
+  results,
+  communityCards = [],
+  revealedCount = 0,
+  step,
+  winners = [],
+}) {
+  const statusByStep = {
+    preflop: "🃏 Pré-flop: cartas na mão, mesa fechada.",
+    flop: "🟩 Flop aberto.",
+    turn: "🟨 Turn aberto.",
+    river: "🟥 River aberto.",
+    showdown: "🏁 Showdown.",
+  };
+
+  const tableCards = Array.from({ length: 5 }).map((_, index) => {
+    const card = communityCards[index];
+    if (!card) return "🂠";
+    return index < revealedCount ? formatCard(card) : "🂠";
+  });
+
+  const playerLines = results.map((result, index) => {
+    const hole =
+      step === "showdown" ? result.holeCards.map(formatCard).join(" ") : "🂠 🂠";
+
+    const handInfo = step === "showdown" ? ` -> ${result.bestHand.name}` : "";
+    return `${index + 1}. ${result.member.displayName}: ${hole}${handInfo}`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle("Mesa do Netinho")
+    .setColor(0x2ecc71)
+    .setDescription(
+      [
+        statusByStep[step] || "Rodada em andamento.",
+        `Mesa: ${tableCards.join(" ")}`,
+        "",
+        "**Jogadores:**",
+        ...playerLines,
+      ].join("\n"),
     );
-  } else {
-    lines.push(
-      `🤝 Split pot entre: **${winners.map((winner) => winner.member.displayName).join(", ")}** com ${winners[0].bestHand.name}!`,
-    );
+
+  if (step === "showdown") {
+    if (winners.length === 1) {
+      embed.addFields({
+        name: "Vencedor",
+        value: `${winners[0].member.displayName} com ${winners[0].bestHand.name}`,
+      });
+    } else {
+      embed.addFields({
+        name: "Split Pot",
+        value: `${winners.map((winner) => winner.member.displayName).join(", ")} com ${winners[0].bestHand.name}`,
+      });
+    }
   }
 
-  return message.reply(lines.join("\n"));
+  return embed;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 async function getPokerPlayers(guild, authorId) {
