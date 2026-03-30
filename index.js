@@ -9,19 +9,22 @@ const {
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
-  StreamType,
   entersState,
   VoiceConnectionStatus,
 } = require("@discordjs/voice");
 const fs = require("fs");
 const path = require("path");
 const play = require("play-dl");
-const ytdl = require("@distube/ytdl-core");
 const MAX_COLLECTION_TRACKS = 30;
 const JEFF_USER_ID = "691022104812060704";
 const RAMON_LIST_CHANNEL_ID = "1233506971190038700";
 const TORUGO_URL =
   "https://www.youtube.com/watch?v=0692WFAqRxs&list=RD0692WFAqRxs&start_radio=1";
+const TORUGO_FALLBACK_QUERIES = [
+  "filho do piseiro",
+  "filho do piseiro junin",
+  "hino do torugo",
+];
 let hasSoundCloudToken = false;
 let soundCloudInitPromise = null;
 
@@ -121,12 +124,7 @@ client.on("messageCreate", async (message) => {
       queue.textChannel = message.channel;
     }
 
-    const torugoSong = {
-      url: TORUGO_URL,
-      title: "Filho do Piseiro - Hino do Torugo",
-      source: "youtube",
-      searchHint: "filho do piseiro",
-    };
+    const torugoSong = await resolveTorugoSong();
 
     if (!queue.songs.length) {
       queue.songs.push(torugoSong);
@@ -137,7 +135,9 @@ client.on("messageCreate", async (message) => {
       queue.player.stop();
     }
 
-    return message.reply("🔥 Torugo ativado. Filho do Piseiro vem aí agora!");
+    return message.reply(
+      `🔥 Torugo ativado. Tocando via ${torugoSong.source || "fallback"}: ${torugoSong.title || torugoSong.url}`,
+    );
   }
 
   if (command === "$eduardo") {
@@ -343,11 +343,6 @@ function getFirstImageFromPublic() {
   return path.join(publicDir, imageFile);
 }
 
-function isYouTubeUrl(url) {
-  if (!url) return false;
-  return /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(url);
-}
-
 async function playMusic(guildId) {
   const queue = queues.get(guildId);
   if (!queue) return;
@@ -363,25 +358,10 @@ async function playMusic(guildId) {
       // Alguns ambientes demoram para notificar READY; segue tentativa de tocar mesmo assim.
     }
 
-    let resource;
-    try {
-      const stream = await play.stream(song.url);
-      resource = createAudioResource(stream.stream, {
-        inputType: stream.type,
-      });
-    } catch (streamError) {
-      if (!isYouTubeUrl(song.url)) throw streamError;
-
-      const ytStream = ytdl(song.url, {
-        filter: "audioonly",
-        quality: "highestaudio",
-        highWaterMark: 1 << 25,
-      });
-
-      resource = createAudioResource(ytStream, {
-        inputType: StreamType.Arbitrary,
-      });
-    }
+    const stream = await play.stream(song.url);
+    const resource = createAudioResource(stream.stream, {
+      inputType: stream.type,
+    });
 
     queue.player.play(resource);
   } catch (error) {
@@ -432,14 +412,14 @@ async function resolveSongs(query) {
     const match = await searchBestMatch(title);
     if (!match) return [];
 
-    return [
-      {
-        url: match.url,
-        title,
-        source: match.source,
-        searchHint: title,
-      },
-    ];
+    const playableSong = await ensurePlayableSong({
+      url: match.url,
+      title,
+      source: match.source,
+      searchHint: title,
+    });
+
+    return playableSong ? [playableSong] : [];
   }
 
   if (spotifyType === "album" || spotifyType === "playlist") {
@@ -456,12 +436,12 @@ async function resolveSongs(query) {
         const match = await searchBestMatch(title);
         if (!match) return null;
 
-        return {
+        return ensurePlayableSong({
           url: match.url,
           title,
           source: match.source,
           searchHint: title,
-        };
+        });
       }),
     );
 
@@ -471,43 +451,56 @@ async function resolveSongs(query) {
   const soundCloudType = await safeValidateSoundCloud(query);
   if (soundCloudType === "track") {
     const track = await play.soundcloud(query);
-    return [
-      {
-        url: track.url,
-        title: track.name,
-        source: "soundcloud",
-        searchHint: track.name,
-      },
-    ];
+    const playableSong = await ensurePlayableSong({
+      url: track.url,
+      title: track.name,
+      source: "soundcloud",
+      searchHint: track.name,
+    });
+
+    return playableSong ? [playableSong] : [];
   }
 
   if (soundCloudType === "playlist") {
     const playlist = await play.soundcloud(query);
     const tracks = (playlist.tracks || []).slice(0, MAX_COLLECTION_TRACKS);
 
-    return tracks.map((track) => ({
-      url: track.url,
-      title: track.name,
-      source: "soundcloud",
-      searchHint: track.name,
-    }));
+    const playableSongs = await Promise.all(
+      tracks.map((track) =>
+        ensurePlayableSong({
+          url: track.url,
+          title: track.name,
+          source: "soundcloud",
+          searchHint: track.name,
+        }),
+      ),
+    );
+
+    return playableSongs.filter(Boolean);
   }
 
   if (play.yt_validate(query) === "video") {
-    return [{ url: query, source: "youtube", searchHint: query }];
+    const playableSong = await ensurePlayableSong({
+      url: query,
+      source: "youtube",
+      searchHint: query,
+      title: query,
+    });
+
+    return playableSong ? [playableSong] : [];
   }
 
   const match = await searchBestMatch(query);
   if (!match) return [];
 
-  return [
-    {
-      url: match.url,
-      title: match.title,
-      source: match.source,
-      searchHint: query,
-    },
-  ];
+  const playableSong = await ensurePlayableSong({
+    url: match.url,
+    title: match.title,
+    source: match.source,
+    searchHint: query,
+  });
+
+  return playableSong ? [playableSong] : [];
 }
 
 async function buildSongFromSearchHint(query, excludeUrl, options = {}) {
@@ -522,6 +515,40 @@ async function buildSongFromSearchHint(query, excludeUrl, options = {}) {
     searchHint: query,
     triedFallback: true,
   };
+}
+
+async function resolveTorugoSong() {
+  for (const query of TORUGO_FALLBACK_QUERIES) {
+    const match = await searchBestMatch(query, null, {
+      preferNonYoutube: true,
+    });
+    if (!match) continue;
+
+    const playableSong = await ensurePlayableSong({
+      url: match.url,
+      title: match.title || "Filho do Piseiro - Hino do Torugo",
+      source: match.source,
+      searchHint: query,
+    });
+
+    if (playableSong) return playableSong;
+  }
+
+  const fixedSong = await ensurePlayableSong({
+    url: TORUGO_URL,
+    title: "Filho do Piseiro - Hino do Torugo",
+    source: "youtube-fixed",
+    searchHint: "filho do piseiro",
+  });
+
+  return (
+    fixedSong || {
+      url: TORUGO_URL,
+      title: "Filho do Piseiro - Hino do Torugo",
+      source: "youtube-fixed",
+      searchHint: "filho do piseiro",
+    }
+  );
 }
 
 async function searchBestMatch(query, excludeUrl = null, options = {}) {
@@ -540,13 +567,13 @@ async function searchBestMatch(query, excludeUrl = null, options = {}) {
         () => searchWithSource(query, undefined, "generic"),
       ]
     : [
-        () => searchWithSource(query, { youtube: "video" }, "youtube"),
         ...(soundCloudReady
           ? [
               () =>
                 searchWithSource(query, { soundcloud: "tracks" }, "soundcloud"),
             ]
           : []),
+        () => searchWithSource(query, { youtube: "video" }, "youtube"),
         () => searchWithSource(query, undefined, "generic"),
       ];
 
@@ -562,19 +589,50 @@ async function searchBestMatch(query, excludeUrl = null, options = {}) {
 
 async function searchWithSource(query, source, sourceLabel) {
   try {
-    const options = { limit: 1 };
+    const options = { limit: 5 };
     if (source) options.source = source;
 
     const results = await play.search(query, options);
     if (!results.length) return null;
 
-    return {
-      url: results[0].url,
-      title: results[0].title,
-      source: sourceLabel,
-    };
+    for (const result of results) {
+      if (!result?.url) continue;
+      const streamable = await canStreamUrl(result.url);
+      if (!streamable) continue;
+
+      return {
+        url: result.url,
+        title: result.title,
+        source: sourceLabel,
+      };
+    }
+
+    return null;
   } catch {
     return null;
+  }
+}
+
+async function ensurePlayableSong(song) {
+  if (!song?.url) return null;
+
+  const streamable = await canStreamUrl(song.url);
+  if (streamable) return song;
+
+  return buildSongFromSearchHint(song.searchHint || song.title, song.url, {
+    preferNonYoutube: true,
+  });
+}
+
+async function canStreamUrl(url) {
+  try {
+    const stream = await play.stream(url);
+    if (stream?.stream?.destroy) {
+      stream.stream.destroy();
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 
