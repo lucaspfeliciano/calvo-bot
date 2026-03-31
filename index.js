@@ -192,6 +192,7 @@ client.on("messageCreate", async (message) => {
         "$malafa - Triagem de sintomas + diagnóstico duvidoso",
         "$tadeu - Mensagem especial do Delicio",
         "$jeff / $calvo - Muta o Jeff",
+        "$pjl / $desmutajeff - Libera o Jeff (desmuta no servidor)",
         "$gui - Enquete aleatória duvidosa",
       ].join("\n"),
     );
@@ -237,6 +238,20 @@ client.on("messageCreate", async (message) => {
     }
 
     return message.reply("Jeff não está em canal de voz agora pra mutar.");
+  }
+
+  if (command === "$pjl" || command === "$desmutajeff") {
+    const unmuted = await unmuteJeff(
+      message.guild,
+      `Comando ${command} executado`,
+    );
+    if (unmuted) {
+      return message.reply("🔊 Jeff liberado. Voltou a falar no servidor.");
+    }
+
+    return message.reply(
+      "Não consegui liberar o Jeff agora (talvez ele não esteja em call).",
+    );
   }
 
   if (command === "$caslu") {
@@ -1925,6 +1940,19 @@ async function muteJeff(guild, reason) {
     return true;
   } catch (error) {
     console.error("Erro ao mutar Jeff:", error);
+    return false;
+  }
+}
+
+async function unmuteJeff(guild, reason) {
+  try {
+    const target = await guild.members.fetch(JEFF_USER_ID);
+    if (!target?.voice?.channel) return false;
+
+    await target.voice.setMute(false, reason);
+    return true;
+  } catch (error) {
+    console.error("Erro ao liberar Jeff:", error);
     return false;
   }
 }
