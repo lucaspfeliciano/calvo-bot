@@ -812,6 +812,7 @@ function buildPokerEmbed({
       [
         suspenseText || statusByStep[step] || "Rodada em andamento.",
         `Mesa: ${tableCards.join(" ")}`,
+        "Nipes: ♥ Copas | ♦ Ouros | ♣ Paus | ♠ Espadas",
         "",
         "**Jogadores:**",
         ...playerLines,
@@ -1757,7 +1758,20 @@ function drawCard(deck) {
 }
 
 function formatCard(card) {
-  return `${card.rank}${card.suit}`;
+  const suitLabels = {
+    H: { symbol: "♥", short: "Copas" },
+    D: { symbol: "♦", short: "Ouros" },
+    C: { symbol: "♣", short: "Paus" },
+    S: { symbol: "♠", short: "Espadas" },
+  };
+  const rankLabels = {
+    T: "10",
+  };
+
+  const suit = suitLabels[card.suit] || { symbol: card.suit, short: card.suit };
+  const rank = rankLabels[card.rank] || card.rank;
+
+  return `${rank}${suit.symbol}(${suit.short})`;
 }
 
 function cardValue(rank) {
