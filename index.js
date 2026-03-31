@@ -799,8 +799,7 @@ function buildPokerEmbed({
   });
 
   const playerLines = results.map((result, index) => {
-    const hole =
-      step === "showdown" ? result.holeCards.map(formatCard).join(" ") : "🂠 🂠";
+    const hole = result.holeCards.map(formatCard).join(" ");
 
     const handInfo = step === "showdown" ? ` -> ${result.bestHand.name}` : "";
     return `${index + 1}. ${result.member.displayName}: ${hole}${handInfo}`;
