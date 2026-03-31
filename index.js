@@ -1771,7 +1771,7 @@ function formatCard(card) {
   const suit = suitLabels[card.suit] || { symbol: card.suit, short: card.suit };
   const rank = rankLabels[card.rank] || card.rank;
 
-  return `${rank}${suit.symbol}(${suit.short})`;
+  return `${rank}${suit.symbol}`;
 }
 
 function cardValue(rank) {
