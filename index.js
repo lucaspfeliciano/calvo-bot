@@ -623,7 +623,7 @@ async function runNetinhoPoker(message) {
     );
   }
 
-  const selectedPlayers = shuffle([...players]).slice(0, 6);
+  const selectedPlayers = shuffle([...players]).slice(0, 9);
   const deck = createDeck();
   shuffle(deck);
 
