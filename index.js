@@ -20,6 +20,10 @@ const {
 const fs = require("fs");
 const path = require("path");
 const play = require("play-dl");
+const ffmpeg = require('ffmpeg-static');
+
+process.env.FFMPEG_PATH = ffmpeg;
+
 const MAX_COLLECTION_TRACKS = 30;
 const JEFF_USER_ID = "691022104812060704";
 const RAMON_LIST_CHANNEL_ID = "1233506971190038700";
@@ -232,7 +236,7 @@ client.on("messageCreate", async (message) => {
 
   if (command === "$thekiller") {
     const result = await theKiller(message);
-    return message.reply(result);
+    return message.reply("Te arranca j");
   }
 
   if (command === "$jeff" || command === "$calvo") {
