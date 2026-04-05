@@ -13,6 +13,7 @@ const {
   joinVoiceChannel,
   createAudioPlayer,
   createAudioResource,
+  demuxProbe,
   AudioPlayerStatus,
   entersState,
   VoiceConnectionStatus,
@@ -20,9 +21,45 @@ const {
 const fs = require("fs");
 const path = require("path");
 const play = require("play-dl");
+const ytdl = require("@distube/ytdl-core");
 const ffmpeg = require('ffmpeg-static');
 
 process.env.FFMPEG_PATH = ffmpeg;
+
+const YOUTUBE_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+function getYouTubeCookieHeader() {
+  const rawCookie =
+    process.env.YOUTUBE_COOKIE || process.env.YOUTUBE_COOKIES || "";
+
+  if (rawCookie.trim()) return rawCookie.trim();
+
+  const cookiePairs = [
+    ["VISITOR_INFO1_LIVE", process.env.VISITOR_INFO1_LIVE],
+    ["VISITOR_PRIVACY_METADATA", process.env.VISITOR_PRIVACY_METADATA],
+    ["YSC", process.env.YSC],
+  ].filter(([, value]) => Boolean(value));
+
+  if (!cookiePairs.length) return null;
+
+  return cookiePairs
+    .map(([key, value]) => `${key}=${value}`)
+    .join("; ");
+}
+
+function getYouTubeRequestOptions() {
+  const headers = {
+    "user-agent": YOUTUBE_USER_AGENT,
+  };
+
+  const cookieHeader = getYouTubeCookieHeader();
+  if (cookieHeader) {
+    headers.cookie = cookieHeader;
+  }
+
+  return { headers };
+}
 
 const MAX_COLLECTION_TRACKS = 30;
 const JEFF_USER_ID = "691022104812060704";
@@ -2113,18 +2150,16 @@ async function playMusic(guildId) {
       // Alguns ambientes demoram para notificar READY; segue tentativa de tocar mesmo assim.
     }
 
-    const stream = await play.stream(song.url);
-    const resource = createAudioResource(stream.stream, {
-      inputType: stream.type,
-    });
+    const resource = await createSongResource(song);
 
     queue.player.play(resource);
     updatePlayerPanel(guildId);
   } catch (error) {
     console.error("Erro ao tocar música:", error);
-    const isYouTubeBotBlock = /sign in to confirm/i.test(
+    const isYouTubeBotBlock =
+      /sign in to confirm|429|too many requests|captcha page|unusual traffic/i.test(
       String(error?.message || ""),
-    );
+      );
 
     if (!song.triedFallback) {
       song.triedFallback = true;
@@ -2161,6 +2196,33 @@ async function playMusic(guildId) {
       disablePlayerPanel(queue);
     }
   }
+}
+
+function isYouTubeUrl(url) {
+  if (!url || typeof url !== "string") return false;
+  return play.yt_validate(url) === "video";
+}
+
+async function createSongResource(song) {
+  if (isYouTubeUrl(song?.url)) {
+    const ytStream = ytdl(song.url, {
+      quality: "highestaudio",
+      filter: "audioonly",
+      highWaterMark: 1 << 25,
+      dlChunkSize: 0,
+      requestOptions: getYouTubeRequestOptions(),
+    });
+
+    const probed = await demuxProbe(ytStream);
+    return createAudioResource(probed.stream, {
+      inputType: probed.type,
+    });
+  }
+
+  const stream = await play.stream(song.url);
+  return createAudioResource(stream.stream, {
+    inputType: stream.type,
+  });
 }
 
 function buildPlayerControls(guildId, disabled) {
@@ -2477,6 +2539,17 @@ async function ensurePlayableSong(song) {
 }
 
 async function canStreamUrl(url) {
+  if (isYouTubeUrl(url)) {
+    try {
+      const info = await ytdl.getBasicInfo(url, {
+        requestOptions: getYouTubeRequestOptions(),
+      });
+      return Boolean(info?.videoDetails?.videoId);
+    } catch {
+      return false;
+    }
+  }
+
   try {
     const stream = await play.stream(url);
     if (stream?.stream?.destroy) {
