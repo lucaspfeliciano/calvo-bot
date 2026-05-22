@@ -5,61 +5,87 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running the Bot
 
 ```bash
-node index.js        # Start the bot
-npm install          # Install dependencies
+npm install            # Install dependencies
+npm run dev            # Run with tsx in watch mode (TypeScript directly)
+npm run build          # Compile TS to dist/
+npm start              # Run compiled JS (dist/index.js)
+npm run typecheck      # tsc --noEmit
 ```
 
-Requires a `.env` file (or environment variable) with:
+Requires a `.env` file (or environment variables) with:
 - `TOKEN` — Discord bot token (required)
-- `SOUNDCLOUD_CLIENT_ID` — optional, fetched automatically if absent
+- `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` — optional, enable Spotify links
 
 No test framework or linter is configured.
 
 ## Architecture
 
-The entire bot lives in a single file: **`index.js`** (~2500 lines). There are no modules or separate files beyond static images in `public/`.
+TypeScript project. Source in `src/`, compiled output in `dist/`.
 
 **Command prefix:** `$`
 
-**Main handlers in `index.js`:**
-- `client.on('messageCreate')` — routes `$` commands
-- `client.on('interactionCreate')` — handles button clicks and select menus (music controls, game selections)
-- `AudioPlayerStatus.Idle` event — advances the music queue
+### Layout
+
+```
+src/
+  index.ts                # Bootstrap: env check, register events, login
+  config.ts               # IDs, URLs, delays, env vars
+  client.ts               # Discord.js Client (singleton)
+  distube.ts              # DisTube instance with YouTube/Spotify/SoundCloud plugins
+  types.ts                # Shared types (Command, sessions, poker hands)
+  data/                   # Static lists (quotes, symptoms, map pool)
+  utils/                  # random, time, discord helpers
+  features/
+    player-panel.ts       # Music control embed + buttons (state Map)
+    torugo.ts             # Torugo song picker
+    poker/                # Texas Hold'em (deck, evaluator, embed, runner)
+    mix.ts                # 5v5 draft session + interaction handler
+    picks.ts              # Map veto session + interaction handler
+    cs-lobby.ts           # CS lobby signup + interaction handler
+    malafa.ts             # Symptom triage select menu + handler
+    moderation.ts         # muteJeff, unmuteJeff, theKiller
+  commands/
+    index.ts              # Registry + name → command lookup
+    music.ts              # $play, $skip, $stop, $leave, $now, $queue, $torugo
+    games.ts              # $netinho, $mix, $picks, $ramon
+    moderation.ts         # $jeff/$calvo, $pjl/$desmutajeff, $thekiller, $caslu
+    misc.ts               # $comandos, $malafa, $tadeu, $eduardo, $cadinho, $gui, $lg, $lemos
+  events/
+    ready.ts              # client ready log
+    messageCreate.ts      # Command dispatcher
+    interactionCreate.ts  # Button/select menu router
+    distube.ts            # DisTube event listeners (playSong, addSong, etc.)
+```
 
 ### Music system
 
-- Queue stored in a `Map<guildId, GuildQueue>` called `queues`
-- `resolveSongs()` resolves a query/URL to playable tracks across YouTube, Spotify (→ search), and SoundCloud
-- `playMusic()` streams audio via `play-dl`; on failure tries fallback search
-- Playlist collection capped at `MAX_COLLECTION_TRACKS = 30`
-- SoundCloud token is lazy-loaded via `ensureSoundCloudReady()`
+- Uses **DisTube v5** with `@distube/youtube`, `@distube/spotify`, `@distube/soundcloud`.
+- DisTube owns the queue; the local `playerPanels` Map only tracks the control message per guild.
+- `registerPlayerPanel(guildId, channel)` is called before `distube.play()` so the panel knows where to post.
+- DisTube events (`playSong`, `addSong`, `addList`, `finish`, `disconnect`, `error`) call `updatePlayerPanel()` / `disablePlayerPanel()`.
 
 ### Game sessions
 
-Active game sessions are held in in-memory Maps (cleared when game ends or bot restarts):
+Each feature owns its own in-memory `Map<sessionId, Session>` (cleared on game end or restart):
 
-| Map | Game |
-|-----|------|
-| `mixSessions` | `$mix` — 5v5 team draft |
-| `picksSessions` | `$picks` — CS map veto |
-| `csLobbySessions` | `$ramon` — CS lobby signup |
+| File | Game |
+|------|------|
+| `features/mix.ts` | `$mix` — 5v5 team draft |
+| `features/picks.ts` | `$picks` — CS map veto |
+| `features/cs-lobby.ts` | `$ramon` — CS lobby signup |
+
+### Adding a new command
+
+1. Implement the handler in `src/features/<feature>.ts` (or reuse an existing one).
+2. Export a `Command` object in `src/commands/<group>.ts` (set `requiresVoice: true` if it needs a voice channel).
+3. Push the command into the group's array (e.g. `musicCommands`). The registry in `commands/index.ts` picks it up automatically.
 
 ### Hardcoded constants
 
-Key IDs and settings live at the top of `index.js` (lines ~23–115):
+In `src/config.ts`:
 - `JEFF_USER_ID` — target user for mute/unmute commands
-- `RAMON_LIST_CHANNEL_ID` — channel where `$ramon` posts
-- `TORUGO_URL` — fallback YouTube URL for `$torugo`
-- `CS_MAP_POOL`, `MIX_TEAM_SIZE`, `POKER_REVEAL_DELAY_MS`, etc.
+- `RAMON_LIST_CHANNEL_ID` — channel where the lobby was originally posted
+- `TORUGO_URL` / `TORUGO_FALLBACK_QUERIES` — used by `$torugo`
+- `POKER_REVEAL_DELAY_MS`, `POKER_BURN_DELAY_MS`, `MIX_TEAM_SIZE`
 
-### Key functions
-
-| Function | Role |
-|----------|------|
-| `createGuildQueue()` | Initialize voice connection and audio player for a guild |
-| `resolveSongs()` | Resolve a query/URL to track list (multi-source) |
-| `playMusic()` | Stream next song; handles fallback and queue advancement |
-| `runNetinhoPoker()` | Animated Texas Hold'em poker game |
-| `startMixCommand()` | Initialize 5v5 team draft |
-| `evaluateSevenCards()` / `compareHandsDesc()` | Poker hand evaluation |
-| `searchBestMatch()` | Multi-source music search with source priority |
+Map pool lives in `src/data/maps.ts`. Quotes/symptoms in `src/data/quotes.ts`.
