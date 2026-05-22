@@ -4,9 +4,21 @@ import { SoundCloudPlugin } from "@distube/soundcloud";
 import { SpotifyPlugin } from "@distube/spotify";
 
 import { client } from "./client";
-import { env } from "./config";
+import { env, loadYoutubeCookies } from "./config";
 
-const plugins: DisTubePlugin[] = [new YouTubePlugin(), new SoundCloudPlugin()];
+const youtubeCookies = loadYoutubeCookies();
+if (youtubeCookies) {
+  console.log(`🍪 YouTube cookies carregados (${youtubeCookies.length} entries).`);
+} else {
+  console.warn(
+    "⚠️ Sem cookies de YouTube — links do YouTube podem cair em bloqueio anti-bot.",
+  );
+}
+
+const plugins: DisTubePlugin[] = [
+  new YouTubePlugin({ cookies: youtubeCookies }),
+  new SoundCloudPlugin(),
+];
 
 if (env.spotifyClientId && env.spotifyClientSecret) {
   plugins.push(
