@@ -252,6 +252,7 @@ client.on("messageCreate", async (message) => {
         "$tadeu - Mensagem especial do Delicio",
         "$jeff / $calvo - Muta o Jeff",
         "$pjl / $desmutajeff - Libera o Jeff (desmuta no servidor)",
+        "$thekiller - Muta todo mundo do canal e libera o Jeff",
         "$gui - Enquete aleatória duvidosa",
       ].join("\n"),
     );
@@ -286,6 +287,11 @@ client.on("messageCreate", async (message) => {
       ],
       components: [row],
     });
+  }
+
+  if (command === "$thekiller") {
+    const result = await theKiller(message);
+    return message.reply("Te arranca j");
   }
 
   if (command === "$jeff" || command === "$calvo") {
@@ -2001,6 +2007,33 @@ async function unmuteJeff(guild, reason) {
   } catch (error) {
     console.error("Erro ao liberar Jeff:", error);
     return false;
+  }
+}
+
+async function theKiller(message) {
+  try {
+    const guild = message.guild;
+    const jeff = await guild.members.fetch(JEFF_USER_ID);
+    const jeffChannel = jeff?.voice?.channel;
+
+    const targetChannel = jeffChannel ?? message.member?.voice?.channel ?? null;
+    if (!targetChannel) return "Ninguém está em canal de voz agora.";
+
+    const members = targetChannel.members.filter((m) => !m.user.bot);
+    if (!members.size) return "Não tem ninguém no canal agora.";
+
+    await Promise.all(
+      members.map((m) =>
+        m.id === JEFF_USER_ID
+          ? m.voice.setMute(false, "thekiller")
+          : m.voice.setMute(true, "thekiller"),
+      ),
+    );
+
+    return "🔇 Xiiuuu. Apenas o Jeff fala.";
+  } catch (error) {
+    console.error("Erro no theKiller:", error);
+    return "Não consegui executar o thekiller agora.";
   }
 }
 
