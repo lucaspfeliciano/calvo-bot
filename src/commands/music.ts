@@ -8,6 +8,19 @@ import {
 } from "../features/player-panel";
 import type { Command } from "../types";
 
+function summarizePlayError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  if (!raw) return "erro desconhecido";
+
+  if (/sign in to confirm/i.test(raw)) {
+    return "YouTube exigiu autenticação anti-bot. Tenta um link do SoundCloud ou Spotify.";
+  }
+
+  const firstLine = raw.split("\n").find((line) => line.trim().length > 0) ?? raw;
+  const trimmed = firstLine.trim();
+  return trimmed.length > 200 ? `${trimmed.slice(0, 197)}...` : trimmed;
+}
+
 export const playCommand: Command = {
   names: ["$play"],
   requiresVoice: true,
@@ -24,8 +37,8 @@ export const playCommand: Command = {
         member: message.member ?? undefined,
       });
     } catch (error) {
-      const reason = error instanceof Error ? error.message : "erro desconhecido";
       console.error("Erro no $play:", error);
+      const reason = summarizePlayError(error);
       return message.reply(`Deu ruim pra processar essa música 😢 (${reason})`);
     }
   },

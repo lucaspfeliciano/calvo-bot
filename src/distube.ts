@@ -5,6 +5,7 @@ import { YtDlpPlugin } from "@distube/yt-dlp";
 
 import { client } from "./client";
 import { env } from "./config";
+import { setupYtDlpCookies } from "./features/yt-dlp-cookies";
 
 // Ordem importa:
 // - SoundCloudPlugin primeiro: claim de URLs do SoundCloud + handler de busca por texto.
@@ -25,6 +26,15 @@ if (env.spotifyClientId && env.spotifyClientSecret) {
 } else {
   console.warn(
     "⚠️ SPOTIFY_CLIENT_ID/SPOTIFY_CLIENT_SECRET não configurados — links do Spotify não vão funcionar.",
+  );
+}
+
+const cookiesPath = setupYtDlpCookies();
+if (cookiesPath) {
+  console.log(`🍪 yt-dlp cookies configurados (${cookiesPath})`);
+} else {
+  console.warn(
+    "⚠️ Sem cookies pro yt-dlp — YouTube provavelmente vai falhar em IPs de cloud.",
   );
 }
 
