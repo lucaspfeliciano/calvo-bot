@@ -9,18 +9,12 @@ const {
   EmbedBuilder,
   StringSelectMenuBuilder,
 } = require("discord.js");
-const {
-  joinVoiceChannel,
-  createAudioPlayer,
-  createAudioResource,
-  AudioPlayerStatus,
-  entersState,
-  VoiceConnectionStatus,
-} = require("@discordjs/voice");
 const fs = require("fs");
 const path = require("path");
-const play = require("play-dl");
-const MAX_COLLECTION_TRACKS = 30;
+const { DisTube } = require("distube");
+const { YouTubePlugin } = require("@distube/youtube");
+const { SoundCloudPlugin } = require("@distube/soundcloud");
+const { SpotifyPlugin } = require("@distube/spotify");
 const JEFF_USER_ID = "691022104812060704";
 const RAMON_LIST_CHANNEL_ID = "1233506971190038700";
 const TORUGO_URL =
@@ -113,9 +107,6 @@ const CS_MAP_POOL = [
   "Dust2",
   "Overpass",
 ];
-let hasSoundCloudToken = false;
-let soundCloudInitPromise = null;
-
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -126,15 +117,85 @@ const client = new Client({
   ],
 });
 
-const queues = new Map();
+const distubePlugins = [new YouTubePlugin(), new SoundCloudPlugin()];
+
+if (process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
+  distubePlugins.push(
+    new SpotifyPlugin({
+      api: {
+        clientId: process.env.SPOTIFY_CLIENT_ID,
+        clientSecret: process.env.SPOTIFY_CLIENT_SECRET,
+      },
+    }),
+  );
+} else {
+  console.warn(
+    "⚠️ SPOTIFY_CLIENT_ID/SPOTIFY_CLIENT_SECRET não configurados — links do Spotify não vão funcionar.",
+  );
+}
+
+const distube = new DisTube(client, {
+  emitNewSongOnly: false,
+  savePreviousSongs: false,
+  nsfw: true,
+  plugins: distubePlugins,
+});
+
+const playerPanels = new Map(); // guildId -> { message, textChannel }
 const mixSessions = new Map();
 const picksSessions = new Map();
 const csLobbySessions = new Map();
 
-client.once("clientReady", async () => {
-  await ensureSoundCloudReady();
+client.once("clientReady", () => {
   console.log("🎵 Bot online!");
 });
+
+distube
+  .on("playSong", (queue) => {
+    updatePlayerPanel(queue.id);
+  })
+  .on("addSong", (queue, song) => {
+    updatePlayerPanel(queue.id);
+    if (queue.songs.length > 1 && queue.textChannel) {
+      queue.textChannel
+        .send(`🎶 Adicionada: ${song.name || song.url}`)
+        .catch(() => {});
+    }
+  })
+  .on("addList", (queue, playlist) => {
+    updatePlayerPanel(queue.id);
+    if (queue.textChannel) {
+      queue.textChannel
+        .send(
+          `🎶 Playlist adicionada: ${playlist.name || "sem nome"} (${playlist.songs.length} músicas)`,
+        )
+        .catch(() => {});
+    }
+  })
+  .on("finish", (queue) => {
+    const panel = playerPanels.get(queue.id);
+    disablePlayerPanel(panel);
+    playerPanels.delete(queue.id);
+  })
+  .on("empty", (queue) => {
+    const panel = playerPanels.get(queue.id);
+    disablePlayerPanel(panel);
+    playerPanels.delete(queue.id);
+  })
+  .on("disconnect", (queue) => {
+    const panel = playerPanels.get(queue.id);
+    disablePlayerPanel(panel);
+    playerPanels.delete(queue.id);
+  })
+  .on("error", (error, queue) => {
+    console.error("DisTube error:", error);
+    const channel = queue?.textChannel;
+    if (channel) {
+      channel
+        .send("⚠️ Deu ruim pra tocar essa música, pulando...")
+        .catch(() => {});
+    }
+  });
 
 client.on("messageCreate", async (message) => {
   if (message.author.bot || !message.guild) return;
@@ -157,8 +218,6 @@ client.on("messageCreate", async (message) => {
   if (!voiceChannel && voiceRequiredCommands.has(command)) {
     return message.reply("Entra em um canal de voz primeiro burrão");
   }
-
-  let queue = queues.get(message.guild.id);
 
   if (command === "$netinho") {
     runNetinhoPoker(message).catch((error) => {
@@ -306,28 +365,29 @@ client.on("messageCreate", async (message) => {
   }
 
   if (command === "$torugo") {
-    if (!queue) {
-      queue = createGuildQueue(message.guild, voiceChannel, message.channel);
-    } else {
-      queue.textChannel = message.channel;
+    try {
+      const torugoQuery = await pickTorugoQuery();
+      const hadQueue = Boolean(distube.getQueue(message.guild.id));
+
+      await distube.play(voiceChannel, torugoQuery, {
+        textChannel: message.channel,
+        member: message.member,
+      });
+
+      if (hadQueue) {
+        const q = distube.getQueue(message.guild.id);
+        if (q && q.songs.length > 1) {
+          const torugoSong = q.songs.pop();
+          q.songs.splice(1, 0, torugoSong);
+          await distube.skip(message.guild.id).catch(() => {});
+        }
+      }
+
+      return message.reply("🔥 Torugo ativado!");
+    } catch (error) {
+      console.error("Erro no $torugo:", error);
+      return message.reply("Não consegui invocar o Torugo agora 😢");
     }
-
-    const torugoSong = await resolveTorugoSong();
-
-    if (!queue.songs.length) {
-      queue.songs.push(torugoSong);
-      updatePlayerPanel(message.guild.id);
-      playMusic(message.guild.id);
-    } else {
-      // Insere para tocar imediatamente após parar a música atual.
-      queue.songs.splice(1, 0, torugoSong);
-      updatePlayerPanel(message.guild.id);
-      queue.player.stop();
-    }
-
-    return message.reply(
-      `🔥 Torugo ativado. Tocando via ${torugoSong.source || "fallback"}: ${torugoSong.title || torugoSong.url}`,
-    );
   }
 
   if (command === "$eduardo") {
@@ -411,98 +471,87 @@ client.on("messageCreate", async (message) => {
   if (command === "$play") {
     if (!query) return message.reply("Manda link ou nome da música seu burro");
 
-    let songsToAdd;
     try {
-      songsToAdd = await resolveSongs(query);
+      registerPlayerPanel(message.guild.id, message.channel);
+      await distube.play(voiceChannel, query, {
+        textChannel: message.channel,
+        member: message.member,
+      });
     } catch (error) {
-      console.error(error);
-      return message.reply("Deu ruim pra processar esse link 😢");
-    }
-
-    if (!songsToAdd.length) {
-      return message.reply("Não achei nada seu tanso 😢");
-    }
-
-    if (!queue) {
-      queue = createGuildQueue(message.guild, voiceChannel, message.channel);
-    } else {
-      queue.textChannel = message.channel;
-    }
-
-    queue.songs.push(...songsToAdd);
-    updatePlayerPanel(message.guild.id);
-
-    const firstSong = songsToAdd[0];
-    if (songsToAdd.length === 1) {
-      message.reply(
-        `🎶 adicionada, toca o pandeiro ai Junin: ${firstSong.title || firstSong.url}`,
+      console.error("Erro no $play:", error);
+      return message.reply(
+        `Deu ruim pra processar essa música 😢 (${error?.message || "erro desconhecido"})`,
       );
-    } else {
-      message.reply(
-        `🎶 ${songsToAdd.length} músicas adicionadas. Primeira da fila: ${firstSong.title || firstSong.url}`,
-      );
-    }
-
-    if (queue.songs.length === songsToAdd.length) {
-      playMusic(message.guild.id);
     }
   }
 
   if (command === "$skip") {
-    if (!queue) return;
-    queue.player.stop();
-    message.reply("⏭️ Pulando...");
+    const q = distube.getQueue(message.guild.id);
+    if (!q) return message.reply("Não tem nada tocando.");
+    try {
+      await distube.skip(message.guild.id);
+      message.reply("⏭️ Pulando...");
+    } catch {
+      // Provavelmente era a última música — finaliza a fila.
+      await distube.stop(message.guild.id).catch(() => {});
+      message.reply("⏭️ Era a última, encerrei a fila.");
+    }
   }
 
   if (command === "$stop") {
-    if (!queue) return;
-    queue.songs = [];
-    updatePlayerPanel(message.guild.id);
-    queue.player.stop();
+    const q = distube.getQueue(message.guild.id);
+    if (!q) return message.reply("Não tem nada tocando.");
+    await distube.stop(message.guild.id).catch(() => {});
     message.reply("⏹️ Sou calvo, parando de tocar");
   }
 
   if (command === "$leave") {
-    if (!queue) return;
-    queue.connection.destroy();
-    queues.delete(message.guild.id);
-    disablePlayerPanel(queue);
+    const q = distube.getQueue(message.guild.id);
+    if (q) {
+      await distube.stop(message.guild.id).catch(() => {});
+    }
+    distube.voices.leave(message.guild.id);
+    const panel = playerPanels.get(message.guild.id);
+    disablePlayerPanel(panel);
+    playerPanels.delete(message.guild.id);
     message.reply("👋Sou calvo, saindo");
   }
 
   if (command === "$now") {
-    if (!queue || !queue.songs.length) {
+    const q = distube.getQueue(message.guild.id);
+    if (!q || !q.songs.length) {
       return message.reply("Agora não tem nada tocando 😴");
     }
 
-    const currentSong = queue.songs[0];
+    const currentSong = q.songs[0];
     return message.reply(
-      `🎵 Tocando agora: ${currentSong.title || currentSong.url} (${currentSong.source || "desconhecida"})`,
+      `🎵 Tocando agora: ${currentSong.name || currentSong.url} (${currentSong.source || "desconhecida"})`,
     );
   }
 
   if (command === "$queue") {
-    if (!queue || !queue.songs.length) {
+    const q = distube.getQueue(message.guild.id);
+    if (!q || !q.songs.length) {
       return message.reply("Fila vazia no momento 🫗");
     }
 
-    const currentSong = queue.songs[0];
-    const nextSongs = queue.songs.slice(1, 11);
+    const currentSong = q.songs[0];
+    const nextSongs = q.songs.slice(1, 11);
 
     const lines = [
-      `🎵 **Agora:** ${currentSong.title || currentSong.url}`,
-      `📦 **Na fila:** ${queue.songs.length - 1}`,
+      `🎵 **Agora:** ${currentSong.name || currentSong.url}`,
+      `📦 **Na fila:** ${q.songs.length - 1}`,
     ];
 
     if (nextSongs.length) {
       lines.push("\n**Próximas:**");
       nextSongs.forEach((song, index) => {
-        lines.push(`${index + 1}. ${song.title || song.url}`);
+        lines.push(`${index + 1}. ${song.name || song.url}`);
       });
     }
 
-    if (queue.songs.length > 11) {
-      lines.push(`... e mais ${queue.songs.length - 11} música(s)`);
+    if (q.songs.length > 11) {
+      lines.push(`... e mais ${q.songs.length - 11} música(s)`);
     }
 
     return message.reply(lines.join("\n"));
@@ -526,7 +575,7 @@ client.on("interactionCreate", async (interaction) => {
     });
   }
 
-  const queue = queues.get(guildId);
+  const q = distube.getQueue(guildId);
 
   if (action === "refresh") {
     await updatePlayerPanel(guildId);
@@ -536,7 +585,7 @@ client.on("interactionCreate", async (interaction) => {
     });
   }
 
-  if (!queue) {
+  if (!q) {
     return interaction.reply({
       content: "Não tem nada tocando agora.",
       ephemeral: true,
@@ -544,14 +593,17 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (action === "skip") {
-    queue.player.stop();
+    try {
+      await distube.skip(guildId);
+    } catch {
+      await distube.stop(guildId).catch(() => {});
+    }
     await interaction.reply({ content: "⏭️ Música pulada.", ephemeral: true });
     return updatePlayerPanel(guildId);
   }
 
   if (action === "stop") {
-    queue.songs = [];
-    queue.player.stop();
+    await distube.stop(guildId).catch(() => {});
     await interaction.reply({
       content: "⏹️ Reprodução parada.",
       ephemeral: true,
@@ -560,13 +612,15 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   if (action === "leave") {
-    queue.connection.destroy();
-    queues.delete(guildId);
+    await distube.stop(guildId).catch(() => {});
+    distube.voices.leave(guildId);
+    const panel = playerPanels.get(guildId);
+    playerPanels.delete(guildId);
     await interaction.reply({
       content: "👋 Saí do canal de voz.",
       ephemeral: true,
     });
-    return disablePlayerPanel(queue);
+    return disablePlayerPanel(panel);
   }
 });
 
@@ -586,27 +640,23 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-function createGuildQueue(guild, voiceChannel, textChannel) {
-  const queue = {
-    songs: [],
-    player: createAudioPlayer(),
-    textChannel,
-    controlMessage: null,
-    connection: joinVoiceChannel({
-      channelId: voiceChannel.id,
-      guildId: guild.id,
-      adapterCreator: guild.voiceAdapterCreator,
-    }),
-  };
+function registerPlayerPanel(guildId, textChannel) {
+  const existing = playerPanels.get(guildId);
+  if (existing) {
+    existing.textChannel = textChannel;
+    return existing;
+  }
+  const panel = { message: null, textChannel };
+  playerPanels.set(guildId, panel);
+  return panel;
+}
 
-  queues.set(guild.id, queue);
-
-  queue.player.on(AudioPlayerStatus.Idle, () => {
-    handleQueueIdle(guild.id);
-  });
-
-  queue.connection.subscribe(queue.player);
-  return queue;
+async function pickTorugoQuery() {
+  // Tenta as queries com nome primeiro (DisTube vai buscar e tocar via YouTube/SoundCloud).
+  for (const candidate of TORUGO_FALLBACK_QUERIES) {
+    if (candidate) return candidate;
+  }
+  return TORUGO_URL;
 }
 
 async function runNetinhoPoker(message) {
@@ -1928,22 +1978,6 @@ function compareHandsDesc(a, b) {
   return 0;
 }
 
-async function handleQueueIdle(guildId) {
-  const queue = queues.get(guildId);
-  if (!queue) return;
-
-  queue.songs.shift();
-  await updatePlayerPanel(guildId);
-
-  if (queue.songs.length) {
-    playMusic(guildId);
-  } else {
-    queue.connection.destroy();
-    queues.delete(guildId);
-    disablePlayerPanel(queue);
-  }
-}
-
 async function muteJeff(guild, reason) {
   try {
     const target = await guild.members.fetch(JEFF_USER_ID);
@@ -2060,71 +2094,6 @@ function getFirstImageFromPublic() {
   return path.join(publicDir, imageFile);
 }
 
-async function playMusic(guildId) {
-  const queue = queues.get(guildId);
-  if (!queue) return;
-
-  const song = queue.songs[0];
-
-  if (!song) return;
-
-  try {
-    try {
-      await entersState(queue.connection, VoiceConnectionStatus.Ready, 10_000);
-    } catch {
-      // Alguns ambientes demoram para notificar READY; segue tentativa de tocar mesmo assim.
-    }
-
-    const stream = await play.stream(song.url);
-    const resource = createAudioResource(stream.stream, {
-      inputType: stream.type,
-    });
-
-    queue.player.play(resource);
-    updatePlayerPanel(guildId);
-  } catch (error) {
-    console.error("Erro ao tocar música:", error);
-    const isYouTubeBotBlock = /sign in to confirm/i.test(
-      String(error?.message || ""),
-    );
-
-    if (!song.triedFallback) {
-      song.triedFallback = true;
-      const fallbackSong = await buildSongFromSearchHint(
-        song.searchHint || song.title,
-        song.url,
-        { preferNonYoutube: isYouTubeBotBlock },
-      );
-
-      if (fallbackSong) {
-        queue.songs[0] = fallbackSong;
-        updatePlayerPanel(guildId);
-        if (queue.textChannel) {
-          queue.textChannel.send(
-            `⚠️ Falhou aqui, tentando fallback: ${fallbackSong.title || fallbackSong.url}`,
-          );
-        }
-
-        return playMusic(guildId);
-      }
-    }
-
-    queue.songs.shift();
-    updatePlayerPanel(guildId);
-    if (queue.textChannel) {
-      queue.textChannel.send("⚠️ Não consegui tocar essa música, pulando...");
-    }
-
-    if (queue.songs.length) {
-      playMusic(guildId);
-    } else {
-      queue.connection.destroy();
-      queues.delete(guildId);
-      disablePlayerPanel(queue);
-    }
-  }
-}
-
 function buildPlayerControls(guildId, disabled) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -2149,10 +2118,7 @@ function buildPlayerControls(guildId, disabled) {
   );
 }
 
-function buildPlayerEmbed(queue) {
-  const currentSong = queue?.songs?.[0];
-  const queueLength = Math.max((queue?.songs?.length || 0) - 1, 0);
-
+function buildPlayerEmbed(currentSong, queueLength) {
   const embed = new EmbedBuilder().setTitle("Jeff Player");
 
   if (!currentSong) {
@@ -2164,7 +2130,7 @@ function buildPlayerEmbed(queue) {
   }
 
   embed
-    .setDescription(`🎵 ${currentSong.title || currentSong.url}`)
+    .setDescription(`🎵 ${currentSong.name || currentSong.url}`)
     .setColor(0x00b894)
     .addFields(
       {
@@ -2179,317 +2145,51 @@ function buildPlayerEmbed(queue) {
 }
 
 async function updatePlayerPanel(guildId) {
-  const queue = queues.get(guildId);
-  if (!queue || !queue.textChannel) return;
+  const q = distube.getQueue(guildId);
+  const panel = playerPanels.get(guildId);
+  const textChannel = panel?.textChannel || q?.textChannel;
+  if (!textChannel) return;
 
-  const embed = buildPlayerEmbed(queue);
-  const controls = buildPlayerControls(guildId, !queue.songs.length);
+  if (!panel) {
+    playerPanels.set(guildId, { message: null, textChannel });
+  }
+
+  const stored = playerPanels.get(guildId);
+  const currentSong = q?.songs?.[0] || null;
+  const queueLength = Math.max((q?.songs?.length || 0) - 1, 0);
+  const embed = buildPlayerEmbed(currentSong, queueLength);
+  const controls = buildPlayerControls(guildId, !currentSong);
 
   try {
-    if (queue.controlMessage) {
-      await queue.controlMessage.edit({
+    if (stored.message) {
+      await stored.message.edit({
         embeds: [embed],
         components: [controls],
       });
       return;
     }
 
-    queue.controlMessage = await queue.textChannel.send({
+    stored.message = await textChannel.send({
       embeds: [embed],
       components: [controls],
     });
   } catch {
-    queue.controlMessage = null;
+    stored.message = null;
   }
 }
 
-async function disablePlayerPanel(queue) {
-  if (!queue?.controlMessage) return;
+async function disablePlayerPanel(panel) {
+  if (!panel?.message) return;
 
   try {
-    const embed = buildPlayerEmbed({ songs: [] });
+    const embed = buildPlayerEmbed(null, 0);
     const controls = buildPlayerControls("offline", true);
-    await queue.controlMessage.edit({
+    await panel.message.edit({
       embeds: [embed],
       components: [controls],
     });
   } catch {
     // Ignore erro de edição de mensagem antiga/apagada.
-  }
-}
-
-async function resolveSongs(query) {
-  const spotifyType = play.sp_validate(query);
-  if (spotifyType === "track") {
-    const track = await play.spotify(query);
-    const title = `${track.name} - ${track.artists.map((artist) => artist.name).join(", ")}`;
-    const match = await searchBestMatch(title);
-    if (!match) return [];
-
-    const playableSong = await ensurePlayableSong({
-      url: match.url,
-      title,
-      source: match.source,
-      searchHint: title,
-    });
-
-    return playableSong ? [playableSong] : [];
-  }
-
-  if (spotifyType === "album" || spotifyType === "playlist") {
-    const spotifyCollection = await play.spotify(query);
-    const tracks = await spotifyCollection.all_tracks();
-
-    // Evita filas gigantes e rate-limit em buscas seguidas.
-    const limitedTracks = tracks.slice(0, MAX_COLLECTION_TRACKS);
-    const resolvedTracks = await Promise.all(
-      limitedTracks.map(async (track) => {
-        const title = `${track.name} - ${track.artists
-          .map((artist) => artist.name)
-          .join(", ")}`;
-        const match = await searchBestMatch(title);
-        if (!match) return null;
-
-        return ensurePlayableSong({
-          url: match.url,
-          title,
-          source: match.source,
-          searchHint: title,
-        });
-      }),
-    );
-
-    return resolvedTracks.filter(Boolean);
-  }
-
-  const soundCloudType = await safeValidateSoundCloud(query);
-  if (soundCloudType === "track") {
-    const track = await play.soundcloud(query);
-    const playableSong = await ensurePlayableSong({
-      url: track.url,
-      title: track.name,
-      source: "soundcloud",
-      searchHint: track.name,
-    });
-
-    return playableSong ? [playableSong] : [];
-  }
-
-  if (soundCloudType === "playlist") {
-    const playlist = await play.soundcloud(query);
-    const tracks = (playlist.tracks || []).slice(0, MAX_COLLECTION_TRACKS);
-
-    const playableSongs = await Promise.all(
-      tracks.map((track) =>
-        ensurePlayableSong({
-          url: track.url,
-          title: track.name,
-          source: "soundcloud",
-          searchHint: track.name,
-        }),
-      ),
-    );
-
-    return playableSongs.filter(Boolean);
-  }
-
-  if (play.yt_validate(query) === "video") {
-    const playableSong = await ensurePlayableSong({
-      url: query,
-      source: "youtube",
-      searchHint: query,
-      title: query,
-    });
-
-    return playableSong ? [playableSong] : [];
-  }
-
-  const match = await searchBestMatch(query);
-  if (!match) return [];
-
-  const playableSong = await ensurePlayableSong({
-    url: match.url,
-    title: match.title,
-    source: match.source,
-    searchHint: query,
-  });
-
-  return playableSong ? [playableSong] : [];
-}
-
-async function buildSongFromSearchHint(query, excludeUrl, options = {}) {
-  if (!query) return null;
-  const match = await searchBestMatch(query, excludeUrl, options);
-  if (!match) return null;
-
-  return {
-    url: match.url,
-    title: match.title,
-    source: match.source,
-    searchHint: query,
-    triedFallback: true,
-  };
-}
-
-async function resolveTorugoSong() {
-  for (const query of TORUGO_FALLBACK_QUERIES) {
-    const match = await searchBestMatch(query, null, {
-      preferNonYoutube: true,
-    });
-    if (!match) continue;
-
-    const playableSong = await ensurePlayableSong({
-      url: match.url,
-      title: match.title || "Filho do Piseiro - Hino do Torugo",
-      source: match.source,
-      searchHint: query,
-    });
-
-    if (playableSong) return playableSong;
-  }
-
-  const fixedSong = await ensurePlayableSong({
-    url: TORUGO_URL,
-    title: "Filho do Piseiro - Hino do Torugo",
-    source: "youtube-fixed",
-    searchHint: "filho do piseiro",
-  });
-
-  return (
-    fixedSong || {
-      url: TORUGO_URL,
-      title: "Filho do Piseiro - Hino do Torugo",
-      source: "youtube-fixed",
-      searchHint: "filho do piseiro",
-    }
-  );
-}
-
-async function searchBestMatch(query, excludeUrl = null, options = {}) {
-  const soundCloudReady = await ensureSoundCloudReady();
-  const preferNonYoutube = Boolean(options.preferNonYoutube);
-
-  const lookups = preferNonYoutube
-    ? [
-        ...(soundCloudReady
-          ? [
-              () =>
-                searchWithSource(query, { soundcloud: "tracks" }, "soundcloud"),
-            ]
-          : []),
-        () => searchWithSource(query, { youtube: "video" }, "youtube"),
-        () => searchWithSource(query, undefined, "generic"),
-      ]
-    : [
-        ...(soundCloudReady
-          ? [
-              () =>
-                searchWithSource(query, { soundcloud: "tracks" }, "soundcloud"),
-            ]
-          : []),
-        () => searchWithSource(query, { youtube: "video" }, "youtube"),
-        () => searchWithSource(query, undefined, "generic"),
-      ];
-
-  for (const lookup of lookups) {
-    const match = await lookup();
-    if (match && match.url !== excludeUrl) {
-      return match;
-    }
-  }
-
-  return null;
-}
-
-async function searchWithSource(query, source, sourceLabel) {
-  try {
-    const options = { limit: 5 };
-    if (source) options.source = source;
-
-    const results = await play.search(query, options);
-    if (!results.length) return null;
-
-    for (const result of results) {
-      if (!result?.url) continue;
-      const streamable = await canStreamUrl(result.url);
-      if (!streamable) continue;
-
-      return {
-        url: result.url,
-        title: result.title,
-        source: sourceLabel,
-      };
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-async function ensurePlayableSong(song) {
-  if (!song?.url) return null;
-
-  const streamable = await canStreamUrl(song.url);
-  if (streamable) return song;
-
-  return buildSongFromSearchHint(song.searchHint || song.title, song.url, {
-    preferNonYoutube: true,
-  });
-}
-
-async function canStreamUrl(url) {
-  try {
-    const stream = await play.stream(url);
-    if (stream?.stream?.destroy) {
-      stream.stream.destroy();
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureSoundCloudReady() {
-  if (hasSoundCloudToken) return true;
-  if (soundCloudInitPromise) return soundCloudInitPromise;
-
-  soundCloudInitPromise = (async () => {
-    try {
-      const clientId =
-        process.env.SOUNDCLOUD_CLIENT_ID || (await play.getFreeClientID());
-
-      if (!clientId) {
-        return false;
-      }
-
-      await play.setToken({
-        soundcloud: {
-          client_id: clientId,
-        },
-      });
-
-      hasSoundCloudToken = true;
-      return true;
-    } catch (error) {
-      console.warn("SoundCloud indisponível no momento:", error?.message);
-      return false;
-    } finally {
-      soundCloudInitPromise = null;
-    }
-  })();
-
-  return soundCloudInitPromise;
-}
-
-async function safeValidateSoundCloud(query) {
-  const soundCloudReady = await ensureSoundCloudReady();
-  if (!soundCloudReady) return false;
-
-  try {
-    return await play.so_validate(query);
-  } catch {
-    return false;
   }
 }
 
