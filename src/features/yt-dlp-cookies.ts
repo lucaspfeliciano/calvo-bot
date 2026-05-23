@@ -35,7 +35,9 @@ function writeCookiesFile(): string | undefined {
 function writeYtDlpConfig(cookiesPath: string): void {
   // O binário fica em node_modules/@distube/yt-dlp/yt-dlp (ou .exe).
   // yt-dlp lê yt-dlp.conf no mesmo diretório automaticamente.
-  const pluginDir = path.dirname(require.resolve("@distube/yt-dlp/package.json"));
+  // Resolve via entry point porque o pacote tem `exports` que bloqueia acessar package.json direto.
+  const entry = require.resolve("@distube/yt-dlp"); // → .../@distube/yt-dlp/dist/index.js
+  const pluginDir = path.dirname(path.dirname(entry));
   const configPath = path.join(pluginDir, "yt-dlp.conf");
   fs.writeFileSync(configPath, `--cookies ${cookiesPath}\n`, "utf8");
 }
