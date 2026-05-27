@@ -9,13 +9,14 @@ server:
 plugins:
   youtube:
     enabled: true
-    # Múltiplos clients aumentam a chance de pegar stream URL antes do anti-bot bater.
-    clients: ["MUSIC", "ANDROID_VR", "WEB", "WEBEMBEDDED"]
-    # Define um PO Token quando você tiver. Sem ele, o WEB client falha em muitos vídeos.
+    # Clients que NÃO precisam de PO Token. Ordem importa: o primeiro que conseguir resolver vence.
+    # Removemos WEB/WEBEMBEDDED porque exigem PO Token em IPs de datacenter (Render, Fly, etc.).
+    clients: ["MUSIC", "ANDROID_MUSIC", "ANDROID_VR", "IOS", "TVHTML5_SIMPLY", "TV"]
+    # Habilita só se você tiver um PO Token + visitorData (via bgutil-pot sidecar ou export manual).
     # pot:
     #   token: "..."
     #   visitorData: "..."
-    # OAuth (alternativa a cookies):
+    # OAuth: alternativa mais robusta a cookies. Gere refreshToken seguindo a doc do youtube-source.
     # oauth:
     #   enabled: true
     #   refreshToken: "..."
