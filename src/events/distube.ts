@@ -11,8 +11,13 @@ import {
 export function registerDistubeEvents(): void {
   distube
     .on(Events.PLAY_SONG, (queue, song) => {
+      const stream = song?.stream as { playFromSource?: boolean; url?: string; song?: { name?: string; source?: string; url?: string; stream?: { url?: string } } } | undefined;
+      const fallback = stream?.song;
       console.log(
-        `[distube] PLAY_SONG queue=${queue.id} song="${song?.name}" source=${song?.source} playFromSource=${song?.stream?.playFromSource} url=${song?.url}`,
+        `[distube] PLAY_SONG queue=${queue.id} song="${song?.name}" source=${song?.source} playFromSource=${stream?.playFromSource} url=${song?.url}` +
+          (fallback
+            ? ` | fallback song="${fallback.name}" source=${fallback.source} url=${fallback.url} streamUrl=${fallback.stream?.url?.slice(0, 80)}...`
+            : ""),
       );
       updatePlayerPanel(queue.id);
     })

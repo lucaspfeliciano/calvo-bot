@@ -1,18 +1,31 @@
 import { DisTube, type DisTubePlugin } from "distube";
 import { SoundCloudPlugin } from "@distube/soundcloud";
 import { SpotifyPlugin } from "@distube/spotify";
-import { YtDlpPlugin } from "@distube/yt-dlp";
+import { download as downloadYtDlpBinary } from "@distube/yt-dlp";
 
 import { client } from "./client";
 import { env } from "./config";
 import { setupYtDlpCookies } from "./features/yt-dlp-cookies";
+import { YtDlpSearchPlugin } from "./features/yt-dlp-search";
+
+// Mantemos o binário do yt-dlp atualizado mesmo sem o YtDlpPlugin oficial.
+downloadYtDlpBinary().catch((error) => {
+  console.warn(
+    "⚠️ Falha ao atualizar yt-dlp binário:",
+    error instanceof Error ? error.message : error,
+  );
+});
 
 // Ordem importa:
-// - SoundCloudPlugin primeiro: claim de URLs do SoundCloud + handler de busca por texto.
-// - SpotifyPlugin: extrai metadata; busca real é delegada ao primeiro plugin com searchSong (SoundCloud).
-// - YtDlpPlugin por último: claim de qualquer URL (YouTube e 900+ outros sites) via binário yt-dlp.
-//   Mais resiliente que o YouTubePlugin contra bloqueio anti-bot em IPs de cloud.
-const plugins: DisTubePlugin[] = [new SoundCloudPlugin()];
+// - YtDlpSearchPlugin: reivindica URLs do YouTube + implementa searchSong (fallback do Spotify e
+//   pra queries de texto). Substitui o YtDlpPlugin oficial, que está quebrado em versões recentes
+//   do yt-dlp por causa da flag deprecada --no-call-home.
+// - SoundCloudPlugin: claim de URLs do SoundCloud + searchSong como fallback secundário.
+// - SpotifyPlugin: extrai metadata; busca real é delegada ao primeiro ExtractorPlugin (YtDlpSearchPlugin).
+const plugins: DisTubePlugin[] = [
+  new YtDlpSearchPlugin(),
+  new SoundCloudPlugin(),
+];
 
 if (env.spotifyClientId && env.spotifyClientSecret) {
   plugins.push(
@@ -37,8 +50,6 @@ if (cookiesPath) {
     "⚠️ Sem cookies pro yt-dlp — YouTube provavelmente vai falhar em IPs de cloud.",
   );
 }
-
-plugins.push(new YtDlpPlugin({ update: true }));
 
 export const distube = new DisTube(client, {
   emitNewSongOnly: false,
