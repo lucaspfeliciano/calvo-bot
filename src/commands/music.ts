@@ -31,11 +31,13 @@ export const playCommand: Command = {
     if (!voiceChannel) return;
 
     try {
+      console.log(`[$play] guild=${message.guild.id} query="${query}"`);
       registerPlayerPanel(message.guild.id, message.channel);
       await distube.play(voiceChannel, query, {
         textChannel: message.channel,
         member: message.member ?? undefined,
       });
+      console.log(`[$play] distube.play() retornou ok para query="${query}"`);
     } catch (error) {
       console.error("Erro no $play:", error);
       const reason = summarizePlayError(error);
