@@ -9,17 +9,15 @@ server:
 plugins:
   youtube:
     enabled: true
-    # Clients que NÃO precisam de PO Token. Ordem importa: o primeiro que conseguir resolver vence.
-    # Removemos WEB/WEBEMBEDDED porque exigem PO Token em IPs de datacenter (Render, Fly, etc.).
-    clients: ["MUSIC", "ANDROID_MUSIC", "ANDROID_VR", "IOS", "TVHTML5_SIMPLY", "TV"]
-    # Habilita só se você tiver um PO Token + visitorData (via bgutil-pot sidecar ou export manual).
-    # pot:
-    #   token: "..."
-    #   visitorData: "..."
-    # OAuth: alternativa mais robusta a cookies. Gere refreshToken seguindo a doc do youtube-source.
-    # oauth:
-    #   enabled: true
-    #   refreshToken: "..."
+    # Com OAuth ligado, qualquer client funciona — usamos uma lista ampla pro fallback.
+    clients: ["MUSIC", "WEB", "WEBEMBEDDED", "ANDROID_MUSIC", "ANDROID_VR"]
+    # OAuth: autentica com uma conta YouTube (USE UMA CONTA SECUNDÁRIA — há risco de ban).
+    # Primeiro deploy: deixa YOUTUBE_REFRESH_TOKEN vazio, o Lavalink imprime um device code no log.
+    # Acesse youtube.com/activate, cole o código, complete o login. O refreshToken aparece no log;
+    # cola ele na env var YOUTUBE_REFRESH_TOKEN e redeploya.
+    oauth:
+      enabled: true
+      refreshToken: "${YOUTUBE_REFRESH_TOKEN:}"
   lavasrc:
     sources:
       spotify: true
