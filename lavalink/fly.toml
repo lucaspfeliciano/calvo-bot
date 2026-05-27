@@ -1,0 +1,31 @@
+# Fly.io app config para o Lavalink server.
+# Deploy: na pasta `lavalink/`, rode `fly launch --no-deploy` (cria o app), depois `fly deploy`.
+
+# Substitua pelo nome final do app (precisa ser único no Fly).
+app = "lavabot-jeff"
+
+# Região mais perto dos servidores Discord BR (gru = São Paulo).
+primary_region = "gru"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  # Lavalink escuta na porta 2333 dentro do container; o Fly proxy expõe via 443/HTTPS.
+  internal_port = 2333
+  force_https = true
+  # Mantém a VM sempre ligada — bot precisa de WebSocket persistente.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  # Lavalink (JVM + plugins) precisa de ~512MB. Aumenta pra 1024 se ver OOM.
+  memory_mb = 512
+
+[env]
+  # JVM ajustada pra caber em 512MB de heap.
+  JAVA_OPTS = "-Xms256m -Xmx384m -XX:+UseG1GC"

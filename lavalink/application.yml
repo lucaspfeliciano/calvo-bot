@@ -88,8 +88,8 @@ logging:
   level:
     root: INFO
     lavalink: INFO
-    # Logs detalhados do youtube-plugin pra diagnosticar OAuth / falhas de load.
-    dev.lavalink.youtube: DEBUG
+    # OAuth confirmado funcionando — manter em INFO pra não vazar token no log.
+    dev.lavalink.youtube: INFO
   request:
     enabled: true
     includeClientInfo: true
