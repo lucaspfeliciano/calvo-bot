@@ -55,6 +55,28 @@ export type ResolveResult =
   | { kind: "error"; message: string };
 
 /**
+ * Remove params problemáticos de URLs do YouTube. Mantém só `v` e `t`/`start`.
+ * Isso evita que URLs como ?v=X&list=RD...&start_radio=1 sejam interpretadas como playlist
+ * dinâmica (radio mix) — que costuma retornar vazio sem sessão ativa.
+ */
+function normalizeYouTubeUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const isYouTube = host.endsWith("youtube.com") || host === "youtu.be";
+    if (!isYouTube) return url;
+
+    const allowed = new Set(["v", "t", "start"]);
+    for (const key of [...u.searchParams.keys()]) {
+      if (!allowed.has(key)) u.searchParams.delete(key);
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
  * Resolve uma query (URL ou texto) via Lavalink. Texto puro é tratado como busca no YouTube.
  */
 export async function resolveQuery(query: string): Promise<ResolveResult> {
@@ -62,17 +84,34 @@ export async function resolveQuery(query: string): Promise<ResolveResult> {
   if (!node) return { kind: "error", message: "Nenhum node Lavalink disponível" };
 
   const isUrl = /^https?:\/\//i.test(query);
-  const identifier = isUrl ? query : `ytsearch:${query}`;
+  const cleanedQuery = isUrl ? normalizeYouTubeUrl(query) : query;
+  const identifier = isUrl ? cleanedQuery : `ytsearch:${query}`;
 
+  console.log(`[lavalink] resolve identifier="${identifier}"`);
   const response: LavalinkResponse | undefined = await node.rest.resolve(
     identifier,
   );
-  if (!response) return { kind: "empty" };
+  if (!response) {
+    console.log(`[lavalink] resolve → undefined`);
+    return { kind: "empty" };
+  }
+
+  console.log(
+    `[lavalink] resolve → loadType=${response.loadType}` +
+      (response.loadType === LoadType.PLAYLIST
+        ? ` tracks=${response.data.tracks.length}`
+        : response.loadType === LoadType.SEARCH
+          ? ` results=${response.data.length}`
+          : response.loadType === LoadType.ERROR
+            ? ` error="${response.data.message}"`
+            : ""),
+  );
 
   switch (response.loadType) {
     case LoadType.TRACK:
       return { kind: "track", track: response.data };
     case LoadType.PLAYLIST:
+      if (!response.data.tracks.length) return { kind: "empty" };
       return {
         kind: "playlist",
         name: response.data.info.name,
