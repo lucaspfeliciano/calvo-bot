@@ -1,6 +1,7 @@
 import { AttachmentBuilder, type Message } from "discord.js";
 
 import { EDUARDO_QUOTES, GUI_QUESTIONS } from "../data/quotes";
+import { getRandomFauMeme } from "../features/fau";
 import { startMalafaCommand } from "../features/malafa";
 import type { Command } from "../types";
 import {
@@ -40,6 +41,7 @@ export const helpCommand: Command = {
         "$pjl / $desmutajeff - Libera o Jeff (desmuta no servidor)",
         "$thekiller - Muta todo mundo do canal e libera o Jeff",
         "$gui - Enquete aleatória duvidosa",
+        "$fau - Meme aleatório zoando o Flamengo",
         "",
         "🎲 **Apostas (faucoins)**",
         "$saldo [@user] - Mostra o saldo de moedas",
@@ -180,6 +182,30 @@ export const lemosCommand: Command = {
   },
 };
 
+const FAU_CAPTIONS = [
+  "🔴⚫ cheirinho...",
+  "Mengão é assim mesmo 🤡",
+  "Toma essa, torcedor do Flamengo 😈",
+  "Urubu chorando de novo 🦅😭",
+  "É campeão de quê mesmo? 🏆🚫",
+];
+
+export const fauCommand: Command = {
+  names: ["$fau"],
+  run: ({ message }) => {
+    const meme = getRandomFauMeme();
+    if (!meme) {
+      return message.reply(
+        "Ainda não tem nenhum meme na pasta `assets/fau/` 🤷 — coloca os gifs/imagens lá.",
+      );
+    }
+    return message.reply({
+      content: pickRandom(FAU_CAPTIONS),
+      files: [new AttachmentBuilder(meme)],
+    });
+  },
+};
+
 export const miscCommands: Command[] = [
   helpCommand,
   malafaCommand,
@@ -189,4 +215,5 @@ export const miscCommands: Command[] = [
   guiCommand,
   lgCommand,
   lemosCommand,
+  fauCommand,
 ];
