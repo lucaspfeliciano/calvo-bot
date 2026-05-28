@@ -253,7 +253,7 @@ export const apostarCommand: Command = {
         return message.reply("Quantia inválida (tem que ser um número ≥ 1).");
       case "insufficient":
         return message.reply(
-          `Saldo insuficiente. Vê seu \`$saldo\` ou pega o \`$daily\`.`,
+          `Saldo insuficiente. Vê seu \`$saldo\` ou usa o \`$resgatar\`.`,
         );
       case "ok":
         await refreshBetMessage(message.client, result.view);

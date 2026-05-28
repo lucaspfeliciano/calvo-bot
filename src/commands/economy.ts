@@ -27,18 +27,18 @@ export const saldoCommand: Command = {
 };
 
 export const dailyCommand: Command = {
-  names: ["$daily"],
+  names: ["$resgatar", "$daily"],
   async run({ message }) {
     if (!isBettingEnabled()) return message.reply(DISABLED_MSG);
 
     const result = await claimDaily(message.author.id);
     if (!result.ok) {
       return message.reply(
-        `⏳ Você já pegou seu daily. Volta em **${formatDuration(result.nextInMs)}**.`,
+        `⏳ Você já resgatou hoje. Volta em **${formatDuration(result.nextInMs)}**.`,
       );
     }
     return message.reply(
-      `${COIN_EMOJI} +${result.amount} ${COIN_NAME}! Saldo: **${result.balance}**.`,
+      `${COIN_EMOJI} +${result.amount} ${COIN_NAME} resgatados! Saldo: **${result.balance}**.`,
     );
   },
 };

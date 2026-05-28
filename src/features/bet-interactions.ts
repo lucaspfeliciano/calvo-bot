@@ -77,7 +77,7 @@ export async function handleBetModal(
       return;
     case "insufficient":
       await interaction.reply({
-        content: "Saldo insuficiente. Vê seu `$saldo` ou pega o `$daily`.",
+        content: "Saldo insuficiente. Vê seu `$saldo` ou usa o `$resgatar`.",
         ephemeral: true,
       });
       return;

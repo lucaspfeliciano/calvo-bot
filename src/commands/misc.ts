@@ -43,7 +43,7 @@ export const helpCommand: Command = {
         "",
         "🎲 **Apostas (faucoins)**",
         "$saldo [@user] - Mostra o saldo de moedas",
-        "$daily - Pega moedas grátis (a cada 20h)",
+        "$resgatar - Resgata moedas grátis (1x por dia)",
         "$ranking - Top 10 mais ricos",
         "$bet criar <pergunta> | op1 | op2 - Abre uma aposta",
         "$apostar <id> <nº> <quantia> - Aposta moedas",

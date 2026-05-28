@@ -20,7 +20,7 @@ export const COIN_NAME = "faucoins";
 export const COIN_EMOJI = "🪙";
 export const STARTING_BALANCE = 1000;
 export const DAILY_AMOUNT = 200;
-export const DAILY_COOLDOWN_MS = 20 * 60 * 60 * 1000; // 20h
+export const DAILY_COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24h (1 resgate por dia)
 
 export const env = {
   token: process.env.TOKEN,
