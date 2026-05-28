@@ -19,18 +19,10 @@ export const env = {
   token: process.env.TOKEN,
   spotifyClientId: process.env.SPOTIFY_CLIENT_ID,
   spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET,
-  lavalinkUrl: process.env.LAVALINK_URL, // ex: "lavalink-xyz.onrender.com:443"
-  lavalinkAuth: process.env.LAVALINK_PASSWORD || "youshallnotpass",
-  lavalinkSecure: process.env.LAVALINK_SECURE === "true",
 };
 
 export function assertEnv(): void {
   if (!env.token) {
     throw new Error("TOKEN env var não configurada.");
-  }
-  if (!env.lavalinkUrl) {
-    throw new Error(
-      "LAVALINK_URL env var não configurada (formato host:port, sem schema).",
-    );
   }
 }

@@ -1,10 +1,15 @@
 import { client } from "../client";
-import { getQueue } from "../features/queue";
+import { distube } from "../distube";
 import { handleCsLobbyInteraction } from "../features/cs-lobby";
 import { handleMalafaInteraction } from "../features/malafa";
 import { handleMixInteraction } from "../features/mix";
 import { handlePicksInteraction } from "../features/picks";
-import { updatePlayerPanel } from "../features/player-panel";
+import {
+  deletePlayerPanel,
+  disablePlayerPanel,
+  getPlayerPanel,
+  updatePlayerPanel,
+} from "../features/player-panel";
 
 async function handlePlayerButton(
   interaction: import("discord.js").ButtonInteraction,
@@ -25,7 +30,7 @@ async function handlePlayerButton(
     });
   }
 
-  const queue = getQueue(guildId);
+  const queue = distube.getQueue(guildId);
   if (!queue) {
     return interaction.reply({
       content: "Não tem nada tocando agora.",
@@ -34,24 +39,34 @@ async function handlePlayerButton(
   }
 
   if (action === "skip") {
-    await queue.skip();
-    return interaction.reply({ content: "⏭️ Música pulada.", ephemeral: true });
+    try {
+      await distube.skip(guildId);
+    } catch {
+      await distube.stop(guildId).catch(() => {});
+    }
+    await interaction.reply({ content: "⏭️ Música pulada.", ephemeral: true });
+    return updatePlayerPanel(guildId);
   }
 
   if (action === "stop") {
-    await queue.stop();
-    return interaction.reply({
+    await distube.stop(guildId).catch(() => {});
+    await interaction.reply({
       content: "⏹️ Reprodução parada.",
       ephemeral: true,
     });
+    return updatePlayerPanel(guildId);
   }
 
   if (action === "leave") {
-    await queue.destroy();
-    return interaction.reply({
+    await distube.stop(guildId).catch(() => {});
+    distube.voices.leave(guildId);
+    const panel = getPlayerPanel(guildId);
+    deletePlayerPanel(guildId);
+    await interaction.reply({
       content: "👋 Saí do canal de voz.",
       ephemeral: true,
     });
+    return disablePlayerPanel(panel);
   }
 
   return null;

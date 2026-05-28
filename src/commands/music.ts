@@ -1,46 +1,31 @@
+import { distube } from "../distube";
 import { pickTorugoQuery } from "../features/torugo";
 import {
-  getOrCreateQueue,
-  getQueue,
-  type QueueTrack,
-} from "../features/queue";
-import { registerPlayerPanel } from "../features/player-panel";
-import { resolveQuery } from "../lavalink";
+  deletePlayerPanel,
+  disablePlayerPanel,
+  getPlayerPanel,
+  registerPlayerPanel,
+} from "../features/player-panel";
 import type { Command } from "../types";
 
-function trackToQueueItem(track: import("shoukaku").Track, member: import("discord.js").GuildMember | null): QueueTrack {
-  return { track, requestedBy: member ?? undefined };
-}
+const YOUTUBE_RE = /(?:youtube\.com|youtu\.be)/i;
 
-async function enqueueQuery(
-  query: string,
-  voiceChannel: import("discord.js").VoiceBasedChannel,
-  textChannel: import("discord.js").TextBasedChannel,
-  member: import("discord.js").GuildMember | null,
-  insertNext = false,
-): Promise<{ ok: true; added: number; name: string } | { ok: false; reason: string }> {
-  const result = await resolveQuery(query);
+const YOUTUBE_NOT_SUPPORTED =
+  "🚫 YouTube não é suportado (o YouTube bloqueia bots em servidores). " +
+  "Manda um link do **SoundCloud** ou **Spotify**, ou só o nome da música que eu busco no SoundCloud. 🎶";
 
-  if (result.kind === "empty") return { ok: false, reason: "Nada encontrado." };
-  if (result.kind === "error")
-    return { ok: false, reason: `Lavalink error: ${result.message}` };
+function summarizePlayError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  if (!raw) return "erro desconhecido";
 
-  const queue = await getOrCreateQueue(
-    voiceChannel.guild.id,
-    voiceChannel,
-    textChannel,
-  );
-
-  if (result.kind === "track") {
-    const item = trackToQueueItem(result.track, member);
-    if (insertNext) queue.insertNext(item);
-    else queue.enqueue(item);
-    return { ok: true, added: 1, name: result.track.info.title };
+  if (/no result|nenhum resultado/i.test(raw)) {
+    return "não achei essa música no SoundCloud. Tenta outro nome ou manda um link direto.";
   }
 
-  const items = result.tracks.map((t) => trackToQueueItem(t, member));
-  queue.enqueueMany(items);
-  return { ok: true, added: items.length, name: result.name };
+  const firstLine =
+    raw.split("\n").find((line) => line.trim().length > 0) ?? raw;
+  const trimmed = firstLine.trim();
+  return trimmed.length > 200 ? `${trimmed.slice(0, 197)}...` : trimmed;
 }
 
 export const playCommand: Command = {
@@ -49,32 +34,23 @@ export const playCommand: Command = {
   async run({ message, query }) {
     if (!query) return message.reply("Manda link ou nome da música seu burro");
 
+    if (YOUTUBE_RE.test(query)) {
+      return message.reply(YOUTUBE_NOT_SUPPORTED);
+    }
+
     const voiceChannel = message.member?.voice?.channel;
     if (!voiceChannel) return;
 
-    registerPlayerPanel(message.guild.id, message.channel);
-
     try {
-      const result = await enqueueQuery(
-        query,
-        voiceChannel,
-        message.channel,
-        message.member,
-      );
-      if (!result.ok)
-        return message.reply(`Deu ruim 😢 (${result.reason})`);
-
-      if (result.added === 1) {
-        return message.reply(`🎶 Adicionada: ${result.name}`);
-      }
-      return message.reply(
-        `🎶 Playlist adicionada: ${result.name} (${result.added} músicas)`,
-      );
+      registerPlayerPanel(message.guild.id, message.channel);
+      await distube.play(voiceChannel, query, {
+        textChannel: message.channel,
+        member: message.member ?? undefined,
+      });
     } catch (error) {
       console.error("Erro no $play:", error);
-      return message.reply(
-        `Deu ruim pra processar essa música 😢 (${error instanceof Error ? error.message : "erro desconhecido"})`,
-      );
+      const reason = summarizePlayError(error);
+      return message.reply(`Deu ruim pra processar essa música 😢 (${reason})`);
     }
   },
 };
@@ -83,42 +59,52 @@ export const skipCommand: Command = {
   names: ["$skip"],
   requiresVoice: true,
   async run({ message }) {
-    const queue = getQueue(message.guild.id);
-    if (!queue || !queue.current) return message.reply("Não tem nada tocando.");
-    await queue.skip();
-    return message.reply("⏭️ Pulando...");
+    const q = distube.getQueue(message.guild.id);
+    if (!q) return message.reply("Não tem nada tocando.");
+    try {
+      await distube.skip(message.guild.id);
+      message.reply("⏭️ Pulando...");
+    } catch {
+      await distube.stop(message.guild.id).catch(() => {});
+      message.reply("⏭️ Era a última, encerrei a fila.");
+    }
   },
 };
 
 export const stopCommand: Command = {
   names: ["$stop"],
   async run({ message }) {
-    const queue = getQueue(message.guild.id);
-    if (!queue || !queue.current) return message.reply("Não tem nada tocando.");
-    await queue.stop();
-    return message.reply("⏹️ Sou calvo, parando de tocar");
+    const q = distube.getQueue(message.guild.id);
+    if (!q) return message.reply("Não tem nada tocando.");
+    await distube.stop(message.guild.id).catch(() => {});
+    message.reply("⏹️ Sou calvo, parando de tocar");
   },
 };
 
 export const leaveCommand: Command = {
   names: ["$leave"],
   async run({ message }) {
-    const queue = getQueue(message.guild.id);
-    if (queue) await queue.destroy();
-    return message.reply("👋Sou calvo, saindo");
+    const q = distube.getQueue(message.guild.id);
+    if (q) await distube.stop(message.guild.id).catch(() => {});
+    distube.voices.leave(message.guild.id);
+    const panel = getPlayerPanel(message.guild.id);
+    await disablePlayerPanel(panel);
+    deletePlayerPanel(message.guild.id);
+    message.reply("👋Sou calvo, saindo");
   },
 };
 
 export const nowCommand: Command = {
   names: ["$now"],
   async run({ message }) {
-    const queue = getQueue(message.guild.id);
-    if (!queue?.current)
+    const q = distube.getQueue(message.guild.id);
+    if (!q || !q.songs.length) {
       return message.reply("Agora não tem nada tocando 😴");
+    }
 
-    const info = queue.current.track.info;
+    const currentSong = q.songs[0]!;
     return message.reply(
-      `🎵 Tocando agora: ${info.title} (${info.sourceName || "desconhecida"})`,
+      `🎵 Tocando agora: ${currentSong.name || currentSong.url} (${currentSong.source || "desconhecida"})`,
     );
   },
 };
@@ -126,24 +112,28 @@ export const nowCommand: Command = {
 export const queueCommand: Command = {
   names: ["$queue"],
   async run({ message }) {
-    const queue = getQueue(message.guild.id);
-    if (!queue?.current) return message.reply("Fila vazia no momento 🫗");
+    const q = distube.getQueue(message.guild.id);
+    if (!q || !q.songs.length) {
+      return message.reply("Fila vazia no momento 🫗");
+    }
 
-    const upcoming = queue.tracks.slice(0, 10);
+    const currentSong = q.songs[0]!;
+    const nextSongs = q.songs.slice(1, 11);
+
     const lines = [
-      `🎵 **Agora:** ${queue.current.track.info.title}`,
-      `📦 **Na fila:** ${queue.size}`,
+      `🎵 **Agora:** ${currentSong.name || currentSong.url}`,
+      `📦 **Na fila:** ${q.songs.length - 1}`,
     ];
 
-    if (upcoming.length) {
+    if (nextSongs.length) {
       lines.push("\n**Próximas:**");
-      upcoming.forEach((item, index) => {
-        lines.push(`${index + 1}. ${item.track.info.title}`);
+      nextSongs.forEach((song, index) => {
+        lines.push(`${index + 1}. ${song.name || song.url}`);
       });
     }
 
-    if (queue.size > 10) {
-      lines.push(`... e mais ${queue.size - 10} música(s)`);
+    if (q.songs.length > 11) {
+      lines.push(`... e mais ${q.songs.length - 11} música(s)`);
     }
 
     return message.reply(lines.join("\n"));
@@ -157,26 +147,24 @@ export const torugoCommand: Command = {
     const voiceChannel = message.member?.voice?.channel;
     if (!voiceChannel) return;
 
-    registerPlayerPanel(message.guild.id, message.channel);
-
     try {
       const torugoQuery = pickTorugoQuery();
-      const hadQueue = Boolean(getQueue(message.guild.id)?.current);
+      const hadQueue = Boolean(distube.getQueue(message.guild.id));
 
-      const result = await enqueueQuery(
-        torugoQuery,
-        voiceChannel,
-        message.channel,
-        message.member,
-        hadQueue, // Se já tinha algo tocando, insere como próxima e pula a atual.
-      );
-      if (!result.ok)
-        return message.reply(`Não consegui invocar o Torugo 😢 (${result.reason})`);
+      await distube.play(voiceChannel, torugoQuery, {
+        textChannel: message.channel,
+        member: message.member ?? undefined,
+      });
 
       if (hadQueue) {
-        const queue = getQueue(message.guild.id);
-        await queue?.skip();
+        const q = distube.getQueue(message.guild.id);
+        if (q && q.songs.length > 1) {
+          const torugoSong = q.songs.pop()!;
+          q.songs.splice(1, 0, torugoSong);
+          await distube.skip(message.guild.id).catch(() => {});
+        }
       }
+
       return message.reply("🔥 Torugo ativado!");
     } catch (error) {
       console.error("Erro no $torugo:", error);

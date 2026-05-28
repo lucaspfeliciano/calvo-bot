@@ -6,7 +6,7 @@ import {
   type TextBasedChannel,
 } from "discord.js";
 
-import { getQueue, onQueueChange, type GuildQueue } from "./queue";
+import { distube } from "../distube";
 import type { PlayerPanel } from "../types";
 
 const panels = new Map<string, PlayerPanel>();
@@ -60,7 +60,7 @@ function buildPlayerControls(
   );
 }
 
-type SongLike = { title?: string; uri?: string; sourceName?: string };
+type SongLike = { name?: string; url?: string; source?: string };
 
 function buildPlayerEmbed(
   currentSong: SongLike | null,
@@ -77,12 +77,12 @@ function buildPlayerEmbed(
   }
 
   embed
-    .setDescription(`🎵 ${currentSong.title || currentSong.uri || "?"}`)
+    .setDescription(`🎵 ${currentSong.name || currentSong.url}`)
     .setColor(0x00b894)
     .addFields(
       {
         name: "Fonte",
-        value: String(currentSong.sourceName || "desconhecida"),
+        value: String(currentSong.source || "desconhecida"),
         inline: true,
       },
       { name: "Na fila", value: String(queueLength), inline: true },
@@ -92,9 +92,9 @@ function buildPlayerEmbed(
 }
 
 export async function updatePlayerPanel(guildId: string): Promise<void> {
-  const queue = getQueue(guildId);
+  const queue = distube.getQueue(guildId);
   const panel = panels.get(guildId);
-  const textChannel = panel?.textChannel || queue?.textChannel;
+  const textChannel = panel?.textChannel || (queue?.textChannel as TextBasedChannel | undefined);
   if (!textChannel || !("send" in textChannel)) return;
 
   if (!panel) {
@@ -102,10 +102,10 @@ export async function updatePlayerPanel(guildId: string): Promise<void> {
   }
 
   const stored = panels.get(guildId)!;
-  const currentInfo = queue?.current?.track.info ?? null;
-  const queueLength = queue?.size ?? 0;
-  const embed = buildPlayerEmbed(currentInfo, queueLength);
-  const controls = buildPlayerControls(guildId, !currentInfo);
+  const currentSong = (queue?.songs?.[0] as SongLike | undefined) || null;
+  const queueLength = Math.max((queue?.songs?.length || 0) - 1, 0);
+  const embed = buildPlayerEmbed(currentSong, queueLength);
+  const controls = buildPlayerControls(guildId, !currentSong);
 
   try {
     if (stored.message) {
@@ -125,9 +125,7 @@ export async function updatePlayerPanel(guildId: string): Promise<void> {
   }
 }
 
-export async function disablePlayerPanel(
-  panel: PlayerPanel | undefined,
-): Promise<void> {
+export async function disablePlayerPanel(panel: PlayerPanel | undefined): Promise<void> {
   if (!panel?.message) return;
 
   try {
@@ -140,21 +138,4 @@ export async function disablePlayerPanel(
   } catch {
     // Ignore erro de edição de mensagem antiga/apagada.
   }
-}
-
-/**
- * Liga o painel ao ciclo de vida da queue: cada mudança (add/skip/end/destroy) atualiza o embed.
- * Quando a queue é destruída, desativa o painel e limpa o registro.
- */
-export function attachPanelToQueueLifecycle(): void {
-  onQueueChange((queue: GuildQueue) => {
-    const guildId = queue.guildId;
-    void updatePlayerPanel(guildId).then(() => {
-      if (!queue.current && queue.size === 0) {
-        const panel = panels.get(guildId);
-        void disablePlayerPanel(panel);
-        panels.delete(guildId);
-      }
-    });
-  });
 }
