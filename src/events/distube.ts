@@ -83,7 +83,9 @@ export function registerDistubeEvents(): void {
       }
     })
     .on(Events.FFMPEG_DEBUG, (debug) => {
-      // Mostra o stderr do ffmpeg — revela 403/404 nos segmentos do SoundCloud, etc.
-      console.log(`[ffmpeg] ${debug}`);
+      // Só loga linhas de erro do ffmpeg (evita spam de cada segmento HLS).
+      if (/error|premature|fail|4\d\d|5\d\d|sigkill/i.test(debug)) {
+        console.log(`[ffmpeg] ${debug}`);
+      }
     });
 }
