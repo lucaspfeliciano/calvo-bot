@@ -2,8 +2,14 @@ import { client } from "../client";
 import { distube } from "../distube";
 import {
   handleBetButton,
+  handleBetCancelButton,
+  handleBetCreateButton,
+  handleBetCreateModal,
   handleBetModal,
+  handleBetResolveButton,
+  handleBetWinnerButton,
 } from "../features/bet-interactions";
+import { runNetinhoHand } from "../features/poker/netinho-bet";
 import { handleCsLobbyInteraction } from "../features/cs-lobby";
 import { handleMalafaInteraction } from "../features/malafa";
 import { handleMixInteraction } from "../features/mix";
@@ -88,10 +94,29 @@ export function registerInteractionCreateEvent(): void {
       if (interaction.customId.startsWith("bet_wager_")) {
         return handleBetButton(interaction);
       }
+      if (interaction.customId === "bet_create") {
+        return handleBetCreateButton(interaction);
+      }
+      if (interaction.customId.startsWith("bet_resolve_")) {
+        return handleBetResolveButton(interaction);
+      }
+      if (interaction.customId.startsWith("bet_win_")) {
+        return handleBetWinnerButton(interaction);
+      }
+      if (interaction.customId.startsWith("bet_cancel_")) {
+        return handleBetCancelButton(interaction);
+      }
+      if (interaction.customId.startsWith("bet_start_")) {
+        const betId = Number(interaction.customId.split("_")[2]);
+        return runNetinhoHand(interaction, betId);
+      }
       return;
     }
 
     if (interaction.isModalSubmit()) {
+      if (interaction.customId === "bet_createmodal") {
+        return handleBetCreateModal(interaction);
+      }
       if (interaction.customId.startsWith("bet_modal_")) {
         return handleBetModal(interaction);
       }

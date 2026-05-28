@@ -1,4 +1,9 @@
-import { PermissionFlagsBits } from "discord.js";
+import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  PermissionFlagsBits,
+} from "discord.js";
 
 import { COIN_EMOJI, COIN_NAME, isBettingEnabled } from "../config";
 import {
@@ -34,6 +39,37 @@ function optionByNumber(bet: BetView, num: number) {
   return bet.options.find((o) => o.position === num - 1);
 }
 
+async function postNewBet(
+  ctx: CommandContext,
+  question: string,
+  options: string[],
+): Promise<unknown> {
+  const { message } = ctx;
+  const view = await createBet(
+    message.guild.id,
+    message.channel.id,
+    message.author.id,
+    question,
+    options,
+  );
+
+  const sent = await message.channel.send(renderBet(view));
+  await setBetMessage(view.id, sent.id);
+
+  return message.reply(
+    `✅ Aposta **#${view.id}** criada! Cliquem nos botões pra apostar.`,
+  );
+}
+
+/** Aposta rápida Sim/Não a partir de `$bet <pergunta>`. */
+async function handleQuickCreate(
+  ctx: CommandContext,
+  question: string,
+): Promise<unknown> {
+  return postNewBet(ctx, question, ["Sim", "Não"]);
+}
+
+/** `$bet criar <pergunta> | op1 | op2` (fallback de texto pra opções customizadas). */
 async function handleCreate(
   ctx: CommandContext,
   rest: string,
@@ -55,22 +91,7 @@ async function handleCreate(
     return message.reply(`Máximo de ${MAX_OPTIONS} opções.`);
   }
 
-  const view = await createBet(
-    message.guild.id,
-    message.channel.id,
-    message.author.id,
-    description!,
-    optionLabels,
-  );
-
-  const sent = await message.channel.send(renderBet(view));
-  await setBetMessage(view.id, sent.id);
-  view.messageId = sent.id;
-
-  return message.reply(
-    `✅ Aposta **#${view.id}** criada! Galera, cliquem nos botões ou usem ` +
-      `\`$apostar ${view.id} <nº> <quantia>\` pra entrar.`,
-  );
+  return postNewBet(ctx, description!, optionLabels);
 }
 
 async function handleClose(
@@ -205,17 +226,37 @@ export const betCommand: Command = {
       return handleCancel(ctx, args[1] ?? "");
     }
 
-    return message.reply(
-      [
-        "🎲 **Comandos de aposta:**",
-        "`$bet criar <pergunta> | opção1 | opção2` — abre uma aposta",
-        "`$apostar <id> <nº> <quantia>` — aposta moedas",
-        "`$bet fechar <id>` — para de aceitar apostas",
-        "`$bet resolver <id> <nº>` — define o vencedor e paga",
-        "`$bet cancelar <id>` — devolve tudo",
-        "`$bets` — lista apostas abertas",
-      ].join("\n"),
-    );
+    // Sem argumentos → painel com botão "Criar aposta" (abre modal).
+    if (args.length === 0) {
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId("bet_create")
+          .setLabel("Criar aposta")
+          .setEmoji("➕")
+          .setStyle(ButtonStyle.Success),
+      );
+      return message.reply({
+        content:
+          "🎲 Clica pra criar uma aposta (com opções customizadas), " +
+          "ou usa `$bet <pergunta>` pra um **Sim/Não** rápido.",
+        components: [row],
+      });
+    }
+
+    if (sub === "help" || sub === "ajuda") {
+      return message.reply(
+        [
+          "🎲 **Como apostar:**",
+          "`$bet` — abre o botão de criar aposta",
+          "`$bet <pergunta>` — cria uma aposta Sim/Não na hora",
+          "Apostar, definir vencedor e cancelar é tudo **nos botões** do embed.",
+          "`$bets` — lista apostas abertas",
+        ].join("\n"),
+      );
+    }
+
+    // Qualquer outro texto → aposta rápida Sim/Não usando o texto como pergunta.
+    return handleQuickCreate(ctx, ctx.query);
   },
 };
 

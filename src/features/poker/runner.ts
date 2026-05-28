@@ -8,7 +8,7 @@ import { createDeck, drawCard } from "./deck";
 import { buildPokerEmbed } from "./embed";
 import { compareHandsDesc, evaluateSevenCards } from "./evaluator";
 
-async function getPokerPlayers(
+export async function getPokerPlayers(
   guild: Guild,
   channelId: string | null | undefined,
 ): Promise<GuildMember[]> {
@@ -25,21 +25,19 @@ async function getPokerPlayers(
   return [...byId.values()];
 }
 
-export async function runNetinhoPoker(message: Message<true>): Promise<unknown> {
-  const pokerMessagePromise = message.reply("🃏 Embaralhando as cartas...");
-  const players = await getPokerPlayers(
-    message.guild,
-    message.member?.voice?.channelId,
-  );
-  const pokerMessage = await pokerMessagePromise;
+/** Embaralha e limita a mesa a 9 jogadores. */
+export function selectPokerPlayers(players: GuildMember[]): GuildMember[] {
+  return shuffle([...players]).slice(0, 9);
+}
 
-  if (players.length < 2) {
-    return pokerMessage.edit(
-      "Não achei jogadores online suficientes pra mesa do Netinho. Preciso de pelo menos 2.",
-    );
-  }
-
-  const selectedPlayers = shuffle([...players]).slice(0, 9);
+/**
+ * Distribui as cartas pros jogadores dados, anima o flop/turn/river editando
+ * `pokerMessage` e retorna os vencedores. Compartilhado por $netinho e $netinhobet.
+ */
+export async function dealAndAnimate(
+  pokerMessage: Message,
+  selectedPlayers: GuildMember[],
+): Promise<{ winners: GuildMember[]; results: PokerPlayerResult[] }> {
   const deck = createDeck();
   shuffle(deck);
 
@@ -170,7 +168,7 @@ export async function runNetinhoPoker(message: Message<true>): Promise<unknown> 
   });
 
   await sleep(POKER_REVEAL_DELAY_MS);
-  return pokerMessage.edit({
+  await pokerMessage.edit({
     embeds: [
       buildPokerEmbed({
         results,
@@ -182,4 +180,24 @@ export async function runNetinhoPoker(message: Message<true>): Promise<unknown> 
       }),
     ],
   });
+
+  return { winners: winners.map((w) => w.member), results };
+}
+
+export async function runNetinhoPoker(message: Message<true>): Promise<unknown> {
+  const pokerMessagePromise = message.reply("🃏 Embaralhando as cartas...");
+  const players = await getPokerPlayers(
+    message.guild,
+    message.member?.voice?.channelId,
+  );
+  const pokerMessage = await pokerMessagePromise;
+
+  if (players.length < 2) {
+    return pokerMessage.edit(
+      "Não achei jogadores online suficientes pra mesa do Netinho. Preciso de pelo menos 2.",
+    );
+  }
+
+  const selectedPlayers = selectPokerPlayers(players);
+  await dealAndAnimate(pokerMessage, selectedPlayers);
 }

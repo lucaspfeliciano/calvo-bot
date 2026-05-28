@@ -27,6 +27,7 @@ export const helpCommand: Command = {
         "$queue - Mostra fila",
         "$torugo - Força o hino do Torugo",
         "$netinho - Mesa de poker animada",
+        "$netinhobet - Poker do Netinho com aposta de faucoins",
         "$cadinho - Rola Fear/Hope (2d12) com animação",
         "$mix - Monta mix com draft de capitães",
         "$picks - Picks/Bans de mapas",

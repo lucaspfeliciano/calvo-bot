@@ -62,6 +62,7 @@ export async function initDb(): Promise<void> {
       creator_id        TEXT NOT NULL,
       description       TEXT NOT NULL,
       status            TEXT NOT NULL DEFAULT 'open',
+      kind              TEXT NOT NULL DEFAULT 'manual',
       winning_option_id INTEGER,
       created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
       resolved_at       TIMESTAMPTZ
@@ -71,7 +72,8 @@ export async function initDb(): Promise<void> {
       id        SERIAL PRIMARY KEY,
       bet_id    INTEGER NOT NULL REFERENCES bets(id) ON DELETE CASCADE,
       label     TEXT NOT NULL,
-      position  INTEGER NOT NULL
+      position  INTEGER NOT NULL,
+      player_id TEXT
     );
 
     CREATE TABLE IF NOT EXISTS wagers (
@@ -82,6 +84,10 @@ export async function initDb(): Promise<void> {
       amount      BIGINT NOT NULL,
       created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+
+    -- Migrações idempotentes (caso as tabelas já existam de uma versão anterior).
+    ALTER TABLE bets ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'manual';
+    ALTER TABLE bet_options ADD COLUMN IF NOT EXISTS player_id TEXT;
 
     CREATE INDEX IF NOT EXISTS idx_wagers_bet ON wagers(bet_id);
     CREATE INDEX IF NOT EXISTS idx_options_bet ON bet_options(bet_id);

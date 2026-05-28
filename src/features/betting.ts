@@ -17,12 +17,14 @@ export const MIN_OPTIONS = 2;
 const OPTION_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"];
 
 export type BetStatus = "open" | "closed" | "resolved" | "cancelled";
+export type BetKind = "manual" | "netinho";
 
 export interface BetOptionView {
   id: number;
   label: string;
   position: number;
   pool: number;
+  playerId: string | null;
 }
 
 export interface BetView {
@@ -33,9 +35,16 @@ export interface BetView {
   creatorId: string;
   description: string;
   status: BetStatus;
+  kind: BetKind;
   winningOptionId: number | null;
   options: BetOptionView[];
   total: number;
+}
+
+export interface CreateBetOptions {
+  kind?: BetKind;
+  /** Para apostas "netinho": user_id do jogador em cada opção (mesma ordem de optionLabels). */
+  playerIds?: (string | null)[];
 }
 
 export async function createBet(
@@ -44,19 +53,22 @@ export async function createBet(
   creatorId: string,
   description: string,
   optionLabels: string[],
+  opts: CreateBetOptions = {},
 ): Promise<BetView> {
+  const kind = opts.kind ?? "manual";
   return withTransaction(async (client) => {
     const { rows } = await client.query<{ id: number }>(
-      `INSERT INTO bets (guild_id, channel_id, creator_id, description)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [guildId, channelId, creatorId, description],
+      `INSERT INTO bets (guild_id, channel_id, creator_id, description, kind)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [guildId, channelId, creatorId, description, kind],
     );
     const betId = rows[0]!.id;
 
     for (let i = 0; i < optionLabels.length; i += 1) {
       await client.query(
-        `INSERT INTO bet_options (bet_id, label, position) VALUES ($1, $2, $3)`,
-        [betId, optionLabels[i], i],
+        `INSERT INTO bet_options (bet_id, label, position, player_id)
+         VALUES ($1, $2, $3, $4)`,
+        [betId, optionLabels[i], i, opts.playerIds?.[i] ?? null],
       );
     }
 
@@ -88,6 +100,7 @@ async function getBetViewWith(
     creator_id: string;
     description: string;
     status: BetStatus;
+    kind: BetKind;
     winning_option_id: number | null;
   }>(`SELECT * FROM bets WHERE id = $1`, [betId]);
   const bet = betRes.rows[0];
@@ -97,9 +110,10 @@ async function getBetViewWith(
     id: number;
     label: string;
     position: number;
+    player_id: string | null;
     pool: string | null;
   }>(
-    `SELECT o.id, o.label, o.position, COALESCE(SUM(w.amount), 0) AS pool
+    `SELECT o.id, o.label, o.position, o.player_id, COALESCE(SUM(w.amount), 0) AS pool
      FROM bet_options o
      LEFT JOIN wagers w ON w.option_id = o.id
      WHERE o.bet_id = $1
@@ -113,6 +127,7 @@ async function getBetViewWith(
     label: o.label,
     position: o.position,
     pool: Number(o.pool ?? 0),
+    playerId: o.player_id,
   }));
   const total = options.reduce((sum, o) => sum + o.pool, 0);
 
@@ -124,6 +139,7 @@ async function getBetViewWith(
     creatorId: bet.creator_id,
     description: bet.description,
     status: bet.status,
+    kind: bet.kind ?? "manual",
     winningOptionId: bet.winning_option_id,
     options,
     total,
@@ -326,6 +342,34 @@ export async function cancelBet(betId: number): Promise<CancelResult> {
   });
 }
 
+/** Monta o texto de anúncio de pagamentos a partir de um resultado de resolução. */
+export async function formatResolveAnnouncement(
+  client: Client,
+  winnerLabel: string,
+  result: { payouts: Payout[]; refunded: boolean },
+): Promise<string> {
+  const header = `🏆 Vencedor: **${winnerLabel}**`;
+  if (result.refunded) {
+    return `${header}\n⚠️ Ninguém acertou — apostas devolvidas.`;
+  }
+  if (!result.payouts.length) {
+    return `${header}\nNinguém tinha apostado.`;
+  }
+  const lines = await Promise.all(
+    result.payouts
+      .slice()
+      .sort((a, b) => b.payout - a.payout)
+      .map(async (p) => {
+        const user = await client.users.fetch(p.userId).catch(() => null);
+        const name = user?.username ?? p.userId;
+        const profit = p.payout - p.staked;
+        const sign = profit >= 0 ? "+" : "";
+        return `• ${name}: **${p.payout}** ${COIN_EMOJI} (${sign}${profit})`;
+      }),
+  );
+  return [header, "💰 Pagamentos:", ...lines].join("\n");
+}
+
 // ---------- Renderização ----------
 
 const STATUS_LABEL: Record<BetStatus, string> = {
@@ -373,19 +417,82 @@ export function buildBetEmbed(view: BetView): EmbedBuilder {
 export function buildBetButtons(
   view: BetView,
 ): ActionRowBuilder<ButtonBuilder>[] {
-  if (view.status !== "open") return [];
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
 
-  const row = new ActionRowBuilder<ButtonBuilder>();
-  for (const opt of view.options) {
-    row.addComponents(
+  // Botões de apostar (só enquanto aberta), em linhas de até 5.
+  if (view.status === "open") {
+    let row = new ActionRowBuilder<ButtonBuilder>();
+    for (const opt of view.options) {
+      if (row.components.length === 5) {
+        rows.push(row);
+        row = new ActionRowBuilder<ButtonBuilder>();
+      }
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`bet_wager_${view.id}_${opt.id}`)
+          .setLabel(opt.label.slice(0, 80))
+          .setEmoji(optionEmoji(opt.position))
+          .setStyle(ButtonStyle.Primary),
+      );
+    }
+    if (row.components.length) rows.push(row);
+  }
+
+  // Linha de controle.
+  const controls = new ActionRowBuilder<ButtonBuilder>();
+  if (view.kind === "netinho") {
+    if (view.status === "open") {
+      controls.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`bet_start_${view.id}`)
+          .setLabel("Começar a mão")
+          .setEmoji("▶️")
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`bet_cancel_${view.id}`)
+          .setLabel("Cancelar")
+          .setStyle(ButtonStyle.Danger),
+      );
+    }
+  } else if (view.status === "open" || view.status === "closed") {
+    controls.addComponents(
       new ButtonBuilder()
-        .setCustomId(`bet_wager_${view.id}_${opt.id}`)
-        .setLabel(opt.label.slice(0, 80))
-        .setEmoji(optionEmoji(opt.position))
-        .setStyle(ButtonStyle.Primary),
+        .setCustomId(`bet_resolve_${view.id}`)
+        .setLabel("Definir vencedor")
+        .setEmoji("🏁")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`bet_cancel_${view.id}`)
+        .setLabel("Cancelar")
+        .setStyle(ButtonStyle.Danger),
     );
   }
-  return [row];
+  if (controls.components.length) rows.push(controls);
+
+  return rows.slice(0, 5);
+}
+
+/** Linha de botões pra escolher o vencedor (usado no picker efêmero do "Definir vencedor"). */
+export function buildWinnerPicker(
+  view: BetView,
+): ActionRowBuilder<ButtonBuilder>[] {
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+  let row = new ActionRowBuilder<ButtonBuilder>();
+  for (const opt of view.options) {
+    if (row.components.length === 5) {
+      rows.push(row);
+      row = new ActionRowBuilder<ButtonBuilder>();
+    }
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`bet_win_${view.id}_${opt.id}`)
+        .setLabel(opt.label.slice(0, 80))
+        .setEmoji(optionEmoji(opt.position))
+        .setStyle(ButtonStyle.Secondary),
+    );
+  }
+  if (row.components.length) rows.push(row);
+  return rows.slice(0, 5);
 }
 
 export function renderBet(view: BetView): {
