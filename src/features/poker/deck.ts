@@ -50,6 +50,16 @@ export function formatCard(card: Card): string {
   return `${rank}${suit.symbol}`;
 }
 
+/** Rótulo do rank ("10" pro T, senão o próprio). */
+export function cardRank(card: Card): string {
+  return RANK_LABELS[card.rank] || card.rank;
+}
+
+/** Símbolo do naipe (♥ ♦ ♣ ♠) — caractere single-width, alinha em monospace. */
+export function cardSuit(card: Card): string {
+  return SUIT_LABELS[card.suit].symbol;
+}
+
 export function cardValue(rank: string): number {
   const values: Record<string, number> = {
     "2": 2,
