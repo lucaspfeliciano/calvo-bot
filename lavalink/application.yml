@@ -88,8 +88,11 @@ logging:
   level:
     root: INFO
     lavalink: INFO
-    # OAuth confirmado funcionando — manter em INFO pra não vazar token no log.
+    # Diagnóstico: DEBUG só nos clients (TV/MUSIC) pra ver o request/response.
+    # Mantém .http em INFO pra não logar o OAuth token de novo.
     dev.lavalink.youtube: INFO
+    dev.lavalink.youtube.clients: DEBUG
+    dev.lavalink.youtube.track: DEBUG
   request:
     enabled: true
     includeClientInfo: true
