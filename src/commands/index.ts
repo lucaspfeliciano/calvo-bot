@@ -1,4 +1,6 @@
 import type { Command } from "../types";
+import { bettingCommands } from "./betting";
+import { economyCommands } from "./economy";
 import { gamesCommands } from "./games";
 import { miscCommands } from "./misc";
 import { moderationCommands } from "./moderation";
@@ -9,6 +11,8 @@ const ALL_COMMANDS: Command[] = [
   ...moderationCommands,
   ...miscCommands,
   ...gamesCommands,
+  ...economyCommands,
+  ...bettingCommands,
 ];
 
 const commandsByName = new Map<string, Command>();

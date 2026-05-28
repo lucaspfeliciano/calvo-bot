@@ -1,5 +1,9 @@
 import { client } from "../client";
 import { distube } from "../distube";
+import {
+  handleBetButton,
+  handleBetModal,
+} from "../features/bet-interactions";
 import { handleCsLobbyInteraction } from "../features/cs-lobby";
 import { handleMalafaInteraction } from "../features/malafa";
 import { handleMixInteraction } from "../features/mix";
@@ -80,6 +84,16 @@ export function registerInteractionCreateEvent(): void {
       }
       if (interaction.customId.startsWith("player_")) {
         return handlePlayerButton(interaction);
+      }
+      if (interaction.customId.startsWith("bet_wager_")) {
+        return handleBetButton(interaction);
+      }
+      return;
+    }
+
+    if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith("bet_modal_")) {
+        return handleBetModal(interaction);
       }
       return;
     }
