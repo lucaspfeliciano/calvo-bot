@@ -81,5 +81,9 @@ export function registerDistubeEvents(): void {
           .send("⚠️ Deu ruim pra tocar essa música, pulando...")
           .catch(() => {});
       }
+    })
+    .on(Events.FFMPEG_DEBUG, (debug) => {
+      // Mostra o stderr do ffmpeg — revela 403/404 nos segmentos do SoundCloud, etc.
+      console.log(`[ffmpeg] ${debug}`);
     });
 }
