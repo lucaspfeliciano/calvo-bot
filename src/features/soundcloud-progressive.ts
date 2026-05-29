@@ -21,6 +21,37 @@ const MAX_NORMAL_SEC = 12 * 60;
 const SEARCH_LIMIT = 15;
 const MAX_CANDIDATES = 6; // quantos candidatos validar antes de desistir
 
+/**
+ * Gera variações progressivamente mais simples de uma query de busca. Títulos do Spotify costumam
+ * vir poluídos ("Música A / Música B (Música Incidental) Artista") e a busca exata do SoundCloud
+ * devolve zero resultado. Tentamos: query original → sem parênteses/colchetes → só o 1º trecho do
+ * medley (antes da "/"). Dedup preservando a ordem.
+ */
+function buildSearchVariants(query: string): string[] {
+  const variants: string[] = [];
+  const add = (value: string) => {
+    const cleaned = value.replace(/\s+/g, " ").trim();
+    if (cleaned && !variants.includes(cleaned)) variants.push(cleaned);
+  };
+
+  add(query);
+
+  // Remove anotações entre parênteses/colchetes — "(Música Incidental)", "[Remastered]", etc.
+  const noParens = query.replace(/[([][^)\]]*[)\]]/g, " ");
+  add(noParens);
+
+  // Medley separado por "/" — a barra atrapalha a busca exata do SoundCloud. Tenta sem ela.
+  add(noParens.replace(/\//g, " "));
+
+  // Último recurso: só o primeiro título do medley (perde o artista, mas é melhor que nada).
+  const slashIndex = noParens.indexOf("/");
+  if (slashIndex !== -1) {
+    add(noParens.slice(0, slashIndex));
+  }
+
+  return variants;
+}
+
 type ScApi = {
   getClientId: (force?: boolean) => Promise<string>;
   headers?: Record<string, string>;
@@ -109,29 +140,33 @@ export class SoundCloudProgressivePlugin extends SoundCloudPlugin {
     const empty = null as unknown as Song<T>;
     await this.scApi.getClientId().catch(() => {});
 
-    const data = (await this.soundcloud.tracks
-      .search({ q: query, limit: SEARCH_LIMIT })
-      .catch(() => null)) as { collection?: ScTrack[] } | null;
+    // Tenta a query original e, se nada tocável aparecer, vai simplificando (tira parênteses,
+    // barra de medley, etc.). Espelhamentos do Spotify costumam vir com títulos poluídos.
+    for (const variant of buildSearchVariants(query)) {
+      const data = (await this.soundcloud.tracks
+        .search({ q: variant, limit: SEARCH_LIMIT })
+        .catch(() => null)) as { collection?: ScTrack[] } | null;
 
-    const tracks = data?.collection ?? [];
-    if (!tracks.length) return empty;
+      const tracks = data?.collection ?? [];
+      if (!tracks.length) continue;
 
-    const ranked = tracks
-      .map((track, index) => ({ track, score: trackScore(track, index) }))
-      .sort((a, b) => a.score - b.score)
-      .slice(0, MAX_CANDIDATES);
+      const ranked = tracks
+        .map((track, index) => ({ track, score: trackScore(track, index) }))
+        .sort((a, b) => a.score - b.score)
+        .slice(0, MAX_CANDIDATES);
 
-    // Valida candidatos em ordem: o primeiro que resolve um stream tocável vence.
-    for (const { track } of ranked) {
-      if (!track.permalink_url) continue;
-      const stream = await resolveCleanStream(
-        track.media?.transcodings ?? [],
-        this.scApi,
-      );
-      if (!stream) continue;
+      // Valida candidatos em ordem: o primeiro que resolve um stream tocável vence.
+      for (const { track } of ranked) {
+        if (!track.permalink_url) continue;
+        const stream = await resolveCleanStream(
+          track.media?.transcodings ?? [],
+          this.scApi,
+        );
+        if (!stream) continue;
 
-      const resolved = await this.resolve(track.permalink_url, options);
-      if ("url" in resolved) return resolved as Song<T>;
+        const resolved = await this.resolve(track.permalink_url, options);
+        if ("url" in resolved) return resolved as Song<T>;
+      }
     }
 
     return empty;

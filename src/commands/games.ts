@@ -22,7 +22,9 @@ export const netinhoBetCommand: Command = {
   async run({ message }) {
     startNetinhoBet(message).catch((error) => {
       console.error("Erro no comando $netinhobet:", error);
-      message.reply("Deu erro na mesa de apostas do Netinho 😢").catch(() => {});
+      message
+        .reply("Deu erro na mesa de apostas do Netinho 😢")
+        .catch(() => {});
     });
   },
 };
