@@ -28,6 +28,24 @@ export class SoundCloudProgressivePlugin extends SoundCloudPlugin {
       .catch(() => undefined);
     if (hls) return hls;
 
+    // Diagnóstico: loga o que o SoundCloud ofereceu (protocolo/preset/cbcs) pra essa faixa.
+    try {
+      const track = (await this.soundcloud.resolve.get(url, true)) as {
+        media?: { transcodings?: Array<{ format?: { protocol?: string }; preset?: string; url?: string }> };
+      };
+      const list = (track?.media?.transcodings ?? [])
+        .map(
+          (t) =>
+            `${t.format?.protocol ?? "?"}/${t.preset ?? "?"}${(t.url ?? "").includes("/cbcs/") ? " [cbcs]" : ""}`,
+        )
+        .join(", ");
+      console.warn(
+        `[soundcloud] sem stream limpo p/ ${url} — transcodings disponíveis: ${list || "nenhuma"}`,
+      );
+    } catch {
+      // ignore
+    }
+
     throw new Error(
       "Essa faixa do SoundCloud não tem stream tocável (provavelmente protegida/DRM).",
     );
