@@ -77,9 +77,13 @@ export function registerDistubeEvents(): void {
       );
       const channel = queue?.textChannel;
       if (channel && "send" in channel) {
-        channel
-          .send("⚠️ Deu ruim pra tocar essa música, pulando...")
-          .catch(() => {});
+        const isDrm = /protegida|DRM|não tem stream tocável/i.test(
+          error?.message ?? "",
+        );
+        const msg = isDrm
+          ? `🔒 "${song?.name ?? "essa faixa"}" é protegida (DRM) no SoundCloud e não pode ser tocada. Tenta outra versão/upload da música.`
+          : "⚠️ Deu ruim pra tocar essa música, pulando...";
+        channel.send(msg).catch(() => {});
       }
     })
     .on(Events.FFMPEG_DEBUG, (debug) => {
