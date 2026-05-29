@@ -1,3 +1,5 @@
+import { generateDependencyReport } from "@discordjs/voice";
+
 import { client } from "./client";
 import { assertEnv, env } from "./config";
 import { initDb } from "./db";
@@ -9,6 +11,12 @@ import { registerReadyEvent } from "./events/ready";
 import { startHealthServer } from "./health-server";
 
 assertEnv();
+
+// Relatório de dependências de voz — confirma opus/criptografia/ffmpeg detectados no ambiente.
+// (espera 2s pra detecção assíncrona das libs de criptografia terminar)
+setTimeout(() => {
+  console.log(generateDependencyReport());
+}, 2000);
 
 startHealthServer();
 

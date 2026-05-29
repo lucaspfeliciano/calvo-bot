@@ -1,14 +1,15 @@
 import { DisTube, type DisTubePlugin } from "distube";
-import { SoundCloudPlugin } from "@distube/soundcloud";
 import { SpotifyPlugin } from "@distube/spotify";
 
 import { client } from "./client";
 import { env } from "./config";
+import { SoundCloudProgressivePlugin } from "./features/soundcloud-progressive";
 
 // Apenas SoundCloud + Spotify. YouTube foi removido por bloqueio anti-bot em IPs de cloud.
-// - SoundCloudPlugin: claim de URLs do SoundCloud + searchSong (busca por texto cai aqui).
+// - SoundCloudProgressivePlugin: claim de URLs do SoundCloud + searchSong; força stream MP3
+//   progressive (o HLS do SoundCloud virou cbcs criptografado e quebra no ffmpeg).
 // - SpotifyPlugin: InfoExtractor — resolve links do Spotify e espelha pro SoundCloud pra tocar.
-const plugins: DisTubePlugin[] = [new SoundCloudPlugin()];
+const plugins: DisTubePlugin[] = [new SoundCloudProgressivePlugin()];
 
 if (env.spotifyClientId && env.spotifyClientSecret) {
   plugins.push(
