@@ -6,12 +6,16 @@ import {
   getPlayerPanel,
   registerPlayerPanel,
 } from "../features/player-panel";
+import {
+  extractYouTubeUrl,
+  youtubeUrlToSearchQuery,
+} from "../features/youtube-fallback";
 import type { Command } from "../types";
 
 const YOUTUBE_RE = /(?:youtube\.com|youtu\.be)/i;
 
 const YOUTUBE_NOT_SUPPORTED =
-  "🚫 YouTube não é suportado (o YouTube bloqueia bots em servidores). " +
+  "🚫 Não consegui identificar essa música do YouTube (vídeo privado/removido?). " +
   "Manda um link do **SoundCloud** ou **Spotify**, ou só o nome da música que eu busco no SoundCloud. 🎶";
 
 function summarizePlayError(error: unknown): string {
@@ -34,16 +38,29 @@ export const playCommand: Command = {
   async run({ message, query }) {
     if (!query) return message.reply("Manda link ou nome da música seu burro");
 
-    if (YOUTUBE_RE.test(query)) {
-      return message.reply(YOUTUBE_NOT_SUPPORTED);
-    }
-
     const voiceChannel = message.member?.voice?.channel;
     if (!voiceChannel) return;
 
+    // YouTube não toca direto (IP de datacenter bloqueado). Em vez de rejeitar, pega o nome
+    // da música via oEmbed e busca a mesma no SoundCloud por baixo dos panos.
+    let playQuery = query;
+    if (YOUTUBE_RE.test(query)) {
+      const ytUrl = extractYouTubeUrl(query);
+      const scQuery = ytUrl ? await youtubeUrlToSearchQuery(ytUrl) : null;
+      if (!scQuery) {
+        return message.reply(YOUTUBE_NOT_SUPPORTED);
+      }
+      playQuery = scQuery;
+      await message
+        .reply(
+          `🔎 YouTube não toca direto aqui — procurando **${scQuery}** no SoundCloud...`,
+        )
+        .catch(() => {});
+    }
+
     try {
       registerPlayerPanel(message.guild.id, message.channel);
-      await distube.play(voiceChannel, query, {
+      await distube.play(voiceChannel, playQuery, {
         textChannel: message.channel,
         member: message.member ?? undefined,
       });
