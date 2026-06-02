@@ -43,6 +43,19 @@ export async function handleBetButton(
   const [, , betId, optionId] = interaction.customId.split("_");
   if (!betId || !optionId) return;
 
+  // netinhov2: cada jogador só pode apostar em si mesmo
+  const view = await getBetView(Number(betId));
+  if (view?.kind === "netinhov2") {
+    const opt = view.options.find((o) => o.id === Number(optionId));
+    if (opt?.playerId !== interaction.user.id) {
+      await interaction.reply({
+        content: "No **Netinho V2** você só pode apostar em si mesmo!",
+        ephemeral: true,
+      });
+      return;
+    }
+  }
+
   const modal = new ModalBuilder()
     .setCustomId(`bet_modal_${betId}_${optionId}`)
     .setTitle("Fazer aposta");

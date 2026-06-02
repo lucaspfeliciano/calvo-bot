@@ -10,6 +10,7 @@ import {
   handleBetWinnerButton,
 } from "../features/bet-interactions";
 import { runNetinhoHand } from "../features/poker/netinho-bet";
+import { runNetinhoHandV2 } from "../features/poker/netinho-bet-v2";
 import { handleCsLobbyInteraction } from "../features/cs-lobby";
 import { handleMalafaInteraction } from "../features/malafa";
 import { handleMixInteraction } from "../features/mix";
@@ -109,6 +110,10 @@ export function registerInteractionCreateEvent(): void {
       if (interaction.customId.startsWith("bet_start_")) {
         const betId = Number(interaction.customId.split("_")[2]);
         return runNetinhoHand(interaction, betId);
+      }
+      if (interaction.customId.startsWith("bet_startv2_")) {
+        const betId = Number(interaction.customId.split("_")[2]);
+        return runNetinhoHandV2(interaction, betId);
       }
       return;
     }

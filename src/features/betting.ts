@@ -17,7 +17,7 @@ export const MIN_OPTIONS = 2;
 const OPTION_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"];
 
 export type BetStatus = "open" | "closed" | "resolved" | "cancelled";
-export type BetKind = "manual" | "netinho";
+export type BetKind = "manual" | "netinho" | "netinhov2";
 
 export interface BetOptionView {
   id: number;
@@ -440,11 +440,15 @@ export function buildBetButtons(
 
   // Linha de controle.
   const controls = new ActionRowBuilder<ButtonBuilder>();
-  if (view.kind === "netinho") {
+  if (view.kind === "netinho" || view.kind === "netinhov2") {
     if (view.status === "open") {
+      const startId =
+        view.kind === "netinhov2"
+          ? `bet_startv2_${view.id}`
+          : `bet_start_${view.id}`;
       controls.addComponents(
         new ButtonBuilder()
-          .setCustomId(`bet_start_${view.id}`)
+          .setCustomId(startId)
           .setLabel("Começar a mão")
           .setEmoji("▶️")
           .setStyle(ButtonStyle.Success),

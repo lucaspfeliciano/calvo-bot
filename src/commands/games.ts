@@ -1,4 +1,5 @@
 import { startNetinhoBet } from "../features/poker/netinho-bet";
+import { startNetinhoBetV2 } from "../features/poker/netinho-bet-v2";
 import { runNetinhoPoker } from "../features/poker/runner";
 import { startMixCommand } from "../features/mix";
 import { startPicksCommand } from "../features/picks";
@@ -29,6 +30,19 @@ export const netinhoBetCommand: Command = {
   },
 };
 
+export const netinhoBetV2Command: Command = {
+  names: ["$netinhov2"],
+  requiresVoice: true,
+  async run({ message }) {
+    startNetinhoBetV2(message).catch((error) => {
+      console.error("Erro no comando $netinhov2:", error);
+      message
+        .reply("Deu erro na mesa de apostas do Netinho V2 😢")
+        .catch(() => {});
+    });
+  },
+};
+
 export const mixCommand: Command = {
   names: ["$mix"],
   requiresVoice: true,
@@ -53,6 +67,7 @@ export const ramonCommand: Command = {
 export const gamesCommands: Command[] = [
   netinhoCommand,
   netinhoBetCommand,
+  netinhoBetV2Command,
   mixCommand,
   picksCommand,
   ramonCommand,
